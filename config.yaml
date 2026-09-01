@@ -14,11 +14,10 @@
 
 
 # --------------------------------------------------------------------------
-# 1) RECHERCHES À SURVEILLER
+# 1) RECHERCHES À SURVEILLER (une ou plusieurs — autant de catégories que vous voulez)
 # --------------------------------------------------------------------------
-# Vous pouvez surveiller une ou plusieurs recherches. Pour obtenir l'URL
-# d'une recherche :
-#   1. Allez sur vinted.fr et configurez votre recherche (catégorie, marque,
+# Pour obtenir l'URL d'une recherche/catégorie :
+#   1. Allez sur vinted.fr et configurez la recherche (catégorie, marque,
 #      taille, état, texte recherché...) — SAUF le tri et le prix minimum,
 #      qui sont gérés automatiquement par le script à chaque cycle.
 #   2. Copiez l'adresse complète depuis la barre du navigateur.
@@ -32,33 +31,72 @@
 #   inclure_mots_cles  : (optionnel) l'annonce doit contenir au moins un de ces mots
 #   exclure_mots_cles  : (optionnel) l'annonce est ignorée si elle contient un de ces mots
 #
+# Pour ajouter une catégorie de plus : dupliquez un bloc "- nom: ..." entier
+# ci-dessous (même indentation) et changez juste le nom et l'url. Autant de
+# blocs que vous voulez.
+#
+# "prix_minimum_possibles" est optionnel PAR catégorie : si une catégorie se
+# vend typiquement à des prix très différents des autres (ex : livres bien
+# moins chers que des sacs à main), donnez-lui sa propre liste de prix ici —
+# sinon elle utilise la liste générale définie plus bas (section 3).
+#
 recherches:
-  - nom: "Exemple - Sacs à main"
-    url: "https://www.vinted.fr/catalog?search_text=sac&catalog[]=1904"
+  - nom: "Sacs à main"
+    url: "REMETTEZ ICI VOTRE LIEN VINTED (sacs à main) — retournez sur vinted.fr, refaites la recherche, recopiez le lien"
     page_debut: 9
     page_fin: 15
     inclure_mots_cles: []
     exclure_mots_cles: ["réplique", "copie", "inspiré de"]
+    # Pas de prix_minimum_possibles ici -> utilise la liste générale [38, 40, 43]
 
-  # Décommentez et adaptez pour ajouter une deuxième recherche :
-  # - nom: "Exemple - Baskets Nike"
-  #   url: "https://www.vinted.fr/catalog?search_text=nike&catalog[]=1231"
+  - nom: "Livres"
+    url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
+    page_debut: 9
+    page_fin: 15
+    inclure_mots_cles: []
+    exclure_mots_cles: []
+    prix_minimum_possibles: [15, 20, 25]   # les livres se vendent moins cher que les sacs : liste propre à cette catégorie
+
+  # Dupliquez ce bloc autant de fois que nécessaire pour couvrir toutes vos
+  # catégories (copiez les lignes ci-dessus, collez, modifiez nom + url, et
+  # ajoutez/retirez la ligne prix_minimum_possibles selon le besoin) :
+  # - nom: "Une autre catégorie"
+  #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
   #   page_debut: 9
-  #   page_fin: 12
+  #   page_fin: 15
   #   inclure_mots_cles: []
   #   exclure_mots_cles: []
 
 
 # --------------------------------------------------------------------------
-# 2) PRIX MINIMUM (choisi au hasard à chaque cycle, comme demandé)
+# 2) MODE ROTATION — pour surveiller BEAUCOUP de catégories sans rallonger
+#    chaque cycle
 # --------------------------------------------------------------------------
-# À chaque cycle, le script choisit au hasard UNE valeur dans cette liste et
-# l'applique comme prix minimum (price_from) sur toutes les recherches.
+# - false (par défaut) : TOUTES les recherches ci-dessus sont vérifiées à
+#   CHAQUE cycle. Bien si vous en avez seulement 1 à 3.
+# - true : UNE SEULE recherche est vérifiée par cycle, choisie tour à tour
+#   parmi toutes celles listées ci-dessus (ordre mélangé à chaque tour
+#   complet). Recommandé si vous voulez suivre beaucoup de catégories : ça
+#   les couvre toutes au fil du temps sans que chaque cycle devienne trop
+#   long. Revers de la médaille : plus vous avez de catégories, moins
+#   chacune est revérifiée souvent (ex : 10 catégories + cycle ~10 min ≈
+#   chaque catégorie revue environ toutes les 1h40).
+rotation: true
+
+
+# --------------------------------------------------------------------------
+# 3) PRIX MINIMUM PAR DÉFAUT (choisi au hasard à chaque cycle, comme demandé)
+# --------------------------------------------------------------------------
+# Pour chaque recherche traitée, le script choisit au hasard UNE valeur dans
+# cette liste et l'applique comme prix minimum (price_from) — SAUF si cette
+# recherche a sa propre liste "prix_minimum_possibles" (voir section 1
+# ci-dessus, ex : la catégorie "Livres"), auquel cas c'est celle-là qui est
+# utilisée à la place.
 prix_minimum_possibles: [38, 40, 43]
 
 
 # --------------------------------------------------------------------------
-# 3) RYTHME DE SURVEILLANCE
+# 4) RYTHME DE SURVEILLANCE
 # --------------------------------------------------------------------------
 # Entre deux cycles, le script attend un temps aléatoire tiré entre "min" et
 # "max" (en minutes). Gardez des valeurs raisonnables : plus c'est fréquent,
@@ -69,7 +107,7 @@ intervalle_minutes:
 
 
 # --------------------------------------------------------------------------
-# 4) FUSEAU HORAIRE
+# 5) FUSEAU HORAIRE
 # --------------------------------------------------------------------------
 # Utilisé pour la pause nocturne et pour l'affichage des heures dans les
 # alertes. Laissez "Europe/Paris" si vous n'êtes pas sûr.
@@ -77,7 +115,7 @@ fuseau_horaire: "Europe/Paris"
 
 
 # --------------------------------------------------------------------------
-# 5) PAUSE NOCTURNE
+# 6) PAUSE NOCTURNE
 # --------------------------------------------------------------------------
 # Aucune activité pendant cette plage horaire (par défaut minuit -> 7h),
 # pour rester discret et ne pas avoir un comportement disponible 24h/24.
@@ -88,7 +126,7 @@ pause_nocturne:
 
 
 # --------------------------------------------------------------------------
-# 6) NAVIGATEUR
+# 7) NAVIGATEUR
 # --------------------------------------------------------------------------
 navigateur:
   headless: true        # true = pas de fenêtre visible ; false = fenêtre visible (pratique pour observer/déboguer)
@@ -98,7 +136,7 @@ navigateur:
 
 
 # --------------------------------------------------------------------------
-# 7) VÉRIFICATION AVANT DE CONSIDÉRER UNE ANNONCE COMME VENDUE
+# 8) VÉRIFICATION AVANT DE CONSIDÉRER UNE ANNONCE COMME VENDUE
 # --------------------------------------------------------------------------
 # Quand une annonce suivie n'apparaît plus dans la zone surveillée, cela peut
 # vouloir dire qu'elle a été vendue... ou simplement qu'elle a glissé au-delà
@@ -111,7 +149,7 @@ verification_avant_disparition:
 
 
 # --------------------------------------------------------------------------
-# 8) SI VINTED SEMBLE BLOQUER LE SCRIPT (CAPTCHA, page de blocage...)
+# 9) SI VINTED SEMBLE BLOQUER LE SCRIPT (CAPTCHA, page de blocage...)
 # --------------------------------------------------------------------------
 # Le script ne cherche jamais à forcer le passage : il s'arrête et attend
 # ce nombre de minutes avant de réessayer.
@@ -119,7 +157,7 @@ pause_si_blocage_minutes: 60
 
 
 # --------------------------------------------------------------------------
-# 9) NOTIFICATIONS
+# 10) NOTIFICATIONS
 # --------------------------------------------------------------------------
 # Le résumé s'affiche toujours dans le terminal. Discord/Telegram sont
 # optionnels, à activer seulement si vous voulez aussi une notification sur
@@ -138,7 +176,7 @@ notifications:
 
 
 # --------------------------------------------------------------------------
-# 10) STOCKAGE (fichiers créés automatiquement par le script)
+# 11) STOCKAGE (fichiers créés automatiquement par le script)
 # --------------------------------------------------------------------------
 stockage:
   base_donnees: "vinted_monitor.db"          # mémoire des annonces déjà vues (SQLite)
@@ -146,7 +184,7 @@ stockage:
 
 
 # --------------------------------------------------------------------------
-# 11) LOGS
+# 12) LOGS
 # --------------------------------------------------------------------------
 logs:
   fichier: "vinted_monitor.log"
@@ -154,7 +192,7 @@ logs:
 
 
 # --------------------------------------------------------------------------
-# 12) PAUSE MANUELLE
+# 13) PAUSE MANUELLE
 # --------------------------------------------------------------------------
 # Pour mettre le script en pause sans l'arrêter : créez un fichier vide avec
 # ce nom dans le même dossier. Supprimez-le pour reprendre. Voir le README.

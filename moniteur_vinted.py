@@ -47,6 +47,7 @@ Pause temporaire (sans arrêter le script) :
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import random
@@ -157,11 +158,16 @@ def configurer_logs(config: dict) -> None:
 #
 # Une seule table "annonces" retient, pour chaque recherche, la première et
 # la dernière fois où une annonce a été vue, ainsi que son statut :
-#   - 'active'       : vue lors du dernier passage, dans la zone surveillée
-#   - 'hors_zone'     : toujours en ligne, mais a glissé au-delà de la
-#                        dernière page surveillée (donc pas "vendue")
-#   - 'vendu'         : disparue et confirmée comme vendue
-#   - 'indisponible'  : disparue et confirmée comme retirée/supprimée
+#   - 'active'        : pas encore résolue — soit vue lors du dernier scan,
+#                        soit toujours en attente de résolution (elle a pu
+#                        glisser au-delà de la zone surveillée à cause de
+#                        nouvelles annonces, sans que ce soit une vente : on
+#                        continue alors à la vérifier directement de temps en
+#                        temps, jusqu'à connaître son sort réel, plutôt que
+#                        de l'abandonner — sinon la mesure "en combien de
+#                        temps une annonce part" serait biaisée)
+#   - 'vendu'          : disparue et confirmée comme vendue
+#   - 'indisponible'   : disparue et confirmée comme retirée/supprimée
 # ========================================================================
 
 def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
@@ -178,12 +184,47 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
             derniere_observation TEXT NOT NULL,
             statut TEXT NOT NULL DEFAULT 'active',
             disparition_detectee TEXT,
+            derniere_verification TEXT,
             PRIMARY KEY (item_id, recherche)
+        )
+        """
+    )
+    # Migration en douceur si la base existait déjà (créée par une version
+    # antérieure du script) et n'a pas encore cette colonne.
+    try:
+        connexion.execute("ALTER TABLE annonces ADD COLUMN derniere_verification TEXT")
+    except sqlite3.OperationalError:
+        pass  # la colonne existe déjà (base neuve, ou déjà migrée)
+    # Petite table générique "clé -> valeur", utilisée notamment pour retenir
+    # où en est le mode rotation (quelles recherches restent à traiter dans
+    # le tour en cours), afin que ça survive à un redémarrage du script.
+    connexion.execute(
+        """
+        CREATE TABLE IF NOT EXISTS etat (
+            cle TEXT PRIMARY KEY,
+            valeur TEXT
         )
         """
     )
     connexion.commit()
     return connexion
+
+
+def lire_etat(bd: sqlite3.Connection, cle: str) -> str | None:
+    curseur = bd.execute("SELECT valeur FROM etat WHERE cle = ?", (cle,))
+    ligne = curseur.fetchone()
+    return ligne[0] if ligne else None
+
+
+def sauvegarder_etat(bd: sqlite3.Connection, cle: str, valeur: str) -> None:
+    bd.execute(
+        """
+        INSERT INTO etat (cle, valeur) VALUES (?, ?)
+        ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur
+        """,
+        (cle, valeur),
+    )
+    bd.commit()
 
 
 def enregistrer_observation(bd: sqlite3.Connection, recherche: str, annonce: dict, maintenant: str) -> None:
@@ -205,10 +246,20 @@ def enregistrer_observation(bd: sqlite3.Connection, recherche: str, annonce: dic
 
 
 def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> list[dict]:
-    """Renvoie les annonces actuellement considérées comme actives dans la zone
-    surveillée pour cette recherche (celles qu'il faut comparer au scan actuel)."""
+    """Renvoie toutes les annonces pas encore résolues (statut 'active') pour
+    cette recherche, triées pour prioriser la file de vérification : celles
+    jamais vérifiées directement, puis celles vérifiées il y a le plus
+    longtemps. Ainsi, sur la durée, TOUTE annonce suivie finit par être
+    vérifiée et résolue (vendue/indisponible), même si elle a glissé hors de
+    la zone de pages surveillée depuis longtemps — on ne l'abandonne jamais
+    silencieusement, ce qui fausserait la mesure du temps de vente."""
     curseur = bd.execute(
-        "SELECT item_id, titre, prix, url, premiere_observation FROM annonces WHERE recherche = ? AND statut = 'active'",
+        """
+        SELECT item_id, titre, prix, url, premiere_observation
+        FROM annonces
+        WHERE recherche = ? AND statut = 'active'
+        ORDER BY derniere_verification IS NOT NULL, derniere_verification ASC
+        """,
         (recherche,),
     )
     colonnes = [description[0] for description in curseur.description]
@@ -223,15 +274,59 @@ def marquer_statut(bd: sqlite3.Connection, recherche: str, item_id: str, statut:
     bd.commit()
 
 
-def marquer_hors_zone(bd: sqlite3.Connection, recherche: str, item_id: str) -> None:
-    """L'annonce est toujours en ligne mais a glissé au-delà de la dernière page
-    surveillée : ce n'est pas une vente, on arrête simplement de la re-vérifier
-    à chaque cycle (pour ne pas multiplier les requêtes inutilement)."""
+def marquer_verifie_toujours_actif(bd: sqlite3.Connection, recherche: str, item_id: str, maintenant: str) -> None:
+    """L'annonce vient d'être vérifiée directement et est toujours en ligne
+    (elle a juste glissé hors de la zone de pages surveillée à cause de
+    nouvelles annonces) : ce n'est PAS une vente. On ne l'abandonne pas pour
+    autant — elle reste 'active' et sera re-proposée plus tard dans la file
+    de vérification (les moins récemment vérifiées passent en premier), afin
+    de finir par connaître son sort réel."""
     bd.execute(
-        "UPDATE annonces SET statut = 'hors_zone' WHERE item_id = ? AND recherche = ?",
-        (item_id, recherche),
+        "UPDATE annonces SET derniere_verification = ? WHERE item_id = ? AND recherche = ?",
+        (maintenant, item_id, recherche),
     )
     bd.commit()
+
+
+def choisir_recherches_du_cycle(config: dict, bd: sqlite3.Connection) -> list[dict]:
+    """Détermine quelle(s) recherche(s) traiter lors de ce cycle.
+
+    - Mode normal (rotation: false, par défaut) : TOUTES les recherches
+      configurées sont traitées à chaque cycle. Adapté à une poignée de
+      recherches qu'on veut surveiller en continu.
+
+    - Mode rotation (rotation: true) : UNE SEULE recherche est traitée par
+      cycle, choisie tour à tour parmi toutes celles configurées. L'ordre est
+      remélangé à chaque tour complet (pas un simple 1,2,3,1,2,3...), pour
+      couvrir un grand nombre de catégories dans le temps sans que chaque
+      cycle devienne interminable. La position dans la rotation est
+      sauvegardée en base : un redémarrage du script ne repart pas de zéro.
+    """
+    toutes_les_recherches = config["recherches"]
+
+    if not config.get("rotation", False):
+        return toutes_les_recherches
+
+    noms_disponibles = [r["nom"] for r in toutes_les_recherches]
+
+    file_json = lire_etat(bd, "file_rotation")
+    file_actuelle = json.loads(file_json) if file_json else []
+
+    # Ne garde que les noms encore présents dans la config actuelle (au cas
+    # où des recherches ont été ajoutées/retirées depuis le dernier cycle).
+    file_actuelle = [nom for nom in file_actuelle if nom in noms_disponibles]
+
+    if not file_actuelle:
+        # File vide (premier lancement, ou tour complet terminé) : on repart
+        # pour un nouveau tour, avec un ordre remélangé.
+        file_actuelle = noms_disponibles.copy()
+        random.shuffle(file_actuelle)
+
+    nom_choisi = file_actuelle.pop(0)
+    sauvegarder_etat(bd, "file_rotation", json.dumps(file_actuelle, ensure_ascii=False))
+
+    recherche_choisie = next(r for r in toutes_les_recherches if r["nom"] == nom_choisi)
+    return [recherche_choisie]
 
 
 # ========================================================================
@@ -597,6 +692,11 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
 
     max_verifs = cfg_verif.get("max_verifications_par_cycle", 8)
 
+    # `absentes` est déjà triée par obtenir_annonces_a_surveiller pour
+    # prioriser les annonces jamais vérifiées / vérifiées il y a le plus
+    # longtemps : ainsi, sur la durée, chaque annonce suivie finit par
+    # passer par une vérification directe, même si le nombre d'annonces en
+    # attente dépasse la limite par cycle.
     for annonce in absentes[:max_verifs]:
         pause_aleatoire(2.0, 5.0)
         statut = verifier_statut_annonce(page, annonce["url"])  # BlocageDetecte remonte naturellement
@@ -606,8 +706,12 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
         elif statut == "indisponible":
             confirmer_disparition(bd, nom_recherche, annonce, "indisponible (retirée/supprimée)", config)
         elif statut == "active":
-            marquer_hors_zone(bd, nom_recherche, annonce["item_id"])
-            logging.debug(f"   ↳ Annonce {annonce['item_id']} toujours active, mais hors zone surveillée.")
+            maintenant = datetime.now(timezone.utc).isoformat()
+            marquer_verifie_toujours_actif(bd, nom_recherche, annonce["item_id"], maintenant)
+            logging.debug(
+                f"   ↳ Annonce {annonce['item_id']} toujours active, hors zone surveillée pour l'instant "
+                "(sera re-vérifiée plus tard)."
+            )
         # "inconnu" (erreur réseau, etc.) : on ne change rien, nouvelle tentative au prochain cycle
 
 
@@ -801,6 +905,16 @@ def attendre(duree_secondes: float, config: dict) -> None:
 # SECTION 11 — UN CYCLE DE SURVEILLANCE
 # ========================================================================
 
+def choisir_prix_minimum(recherche: dict, config: dict) -> int:
+    """Choisit au hasard le prix minimum à appliquer pour cette recherche, lors
+    de ce cycle. Une recherche peut définir sa propre liste de prix possibles
+    (utile quand des catégories très différentes se vendent à des gammes de
+    prix très différentes, ex : livres vs sacs à main) ; à défaut, on utilise
+    la liste globale 'prix_minimum_possibles' définie en haut de config.yaml."""
+    liste = recherche.get("prix_minimum_possibles") or config["prix_minimum_possibles"]
+    return random.choice(liste)
+
+
 def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sqlite3.Connection) -> None:
     """Parcourt toutes les pages configurées pour une recherche donnée."""
     nom = recherche["nom"]
@@ -851,8 +965,14 @@ def executer_cycle(config: dict, bd: sqlite3.Connection, chemin_storage_state: s
     """Exécute un cycle complet : ouvre un navigateur, parcourt toutes les
     recherches configurées, puis referme le navigateur. Renvoie True si un
     blocage a été détecté (pour que la boucle principale attende plus longtemps)."""
-    prix_min = random.choice(config["prix_minimum_possibles"])
-    logging.info(f"🔎 Nouveau cycle — prix minimum choisi pour cette passe : {prix_min} €")
+    logging.info("🔎 Nouveau cycle")
+
+    recherches_du_cycle = choisir_recherches_du_cycle(config, bd)
+    if config.get("rotation", False):
+        logging.info(
+            f"🔁 Mode rotation ({len(config['recherches'])} catégorie(s) au total) — "
+            f"celle traitée ce cycle : « {recherches_du_cycle[0]['nom']} »"
+        )
 
     bloque = False
 
@@ -862,7 +982,8 @@ def executer_cycle(config: dict, bd: sqlite3.Connection, chemin_storage_state: s
         page = contexte.new_page()
 
         try:
-            for recherche in config["recherches"]:
+            for recherche in recherches_du_cycle:
+                prix_min = choisir_prix_minimum(recherche, config)
                 try:
                     traiter_recherche(page, recherche, prix_min, config, bd)
                 except BlocageDetecte:

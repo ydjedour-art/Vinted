@@ -187,10 +187,39 @@ Les points essentiels :
 comme demandé, pour éviter le bruit des annonces flambant neuves de la
 page 1).
 
+### Suivre plusieurs catégories
+
+Ajoutez autant de blocs sous `recherches:` que vous voulez (un par
+catégorie) — dupliquez un bloc existant, changez juste `nom` et `url`. Voir
+les commentaires dans `config.yaml`, section 1.
+
+### Mode rotation — pour suivre beaucoup de catégories
+
+Par défaut (`rotation: false`), **toutes** les recherches configurées sont
+vérifiées à **chaque** cycle — adapté si vous en avez 1 à 3. Si vous en
+ajoutez beaucoup plus, chaque cycle deviendrait très long (et donc moins
+discret). Passez `rotation: true` : le script n'en traite **qu'une seule
+par cycle**, choisie tour à tour parmi toutes celles listées (ordre mélangé
+à chaque tour complet), de façon à toutes les couvrir dans le temps sans
+rallonger chaque cycle. Revers de la médaille : plus vous avez de
+catégories, moins chacune est revérifiée souvent (10 catégories + cycle
+~10 min ≈ chaque catégorie revue environ toutes les 1h40).
+
 ### Prix minimum
 
-`prix_minimum_possibles: [38, 40, 43]` — le script en tire un au hasard à
-chaque cycle. Vous pouvez ajouter/retirer des valeurs.
+`prix_minimum_possibles: [38, 40, 43]` (section 3 de `config.yaml`) — le
+script en tire un au hasard à chaque cycle, pour la recherche traitée. Vous
+pouvez ajouter/retirer des valeurs.
+
+Si une catégorie se vend à des prix très différents des autres (des livres
+se vendent bien moins cher que des sacs à main, par exemple), donnez-lui sa
+propre liste directement dans son bloc, sous `recherches:` :
+```yaml
+  - nom: "Livres"
+    url: "..."
+    prix_minimum_possibles: [15, 20, 25]   # remplace la liste générale, pour cette catégorie uniquement
+```
+Une recherche sans cette ligne utilise simplement la liste générale.
 
 ### Notifications Discord (optionnel)
 
@@ -401,6 +430,16 @@ redémarre le script automatiquement, etc.).
 - **Estimation, pas certitude** : la « vitesse de vente » est calculée par
   rapport à votre première observation, pas à la date réelle de publication
   de l'annonce.
+- **Une annonce n'est jamais abandonnée en silence.** De nouvelles annonces
+  arrivent en continu et repoussent les plus anciennes vers des pages plus
+  profondes (une annonce vue en page 9 peut se retrouver en page 16 sans
+  avoir été vendue). Ce n'est pas traité comme une vente : le script continue
+  de vérifier périodiquement, directement sur la page de l'annonce, toute
+  annonce suivie jusqu'à connaître son sort réel (vendue ou retirée) — les
+  annonces jamais vérifiées, ou vérifiées il y a le plus longtemps, sont
+  prioritaires à chaque cycle. Sur la durée, chaque annonce entrée dans le
+  suivi finit donc par être résolue, ce qui rend la mesure du temps de vente
+  plus fiable sur l'ensemble des annonces suivies.
 - **Vinted change parfois son interface.** L'extraction des annonces s'appuie
   volontairement sur un repère stable (les liens `/items/<identifiant>`)
   plutôt que sur l'apparence exacte des pages, pour limiter ce risque. Mais
