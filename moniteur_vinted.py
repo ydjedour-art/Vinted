@@ -337,23 +337,50 @@ def gerer_bandeau_cookies(page) -> None:
 
 
 def page_bloquee_ou_captcha(page) -> bool:
-    """Détecte une éventuelle page de blocage ou de vérification anti-robot.
-    Si c'est le cas, mieux vaut s'arrêter et attendre plutôt qu'insister : ce
-    script est conçu pour être discret, pas pour forcer un passage en force."""
+    """Détecte une éventuelle page de blocage ou de vérification anti-robot,
+    à distinguer d'une page de résultats normale. Si c'est le cas, mieux vaut
+    s'arrêter et attendre plutôt qu'insister : ce script est conçu pour être
+    discret, pas pour forcer un passage en force.
+
+    Important : on ne cherche PAS ces indices dans tout le code source de la
+    page (page.content()). Une page de résultats parfaitement normale peut
+    contenir des mots comme "captcha" quelque part dans son code (scripts de
+    protection anti-fraude présents en permanence sur tout le site, par
+    exemple), sans qu'aucun blocage ne soit réellement affiché à l'écran — ce
+    qui déclencherait une fausse alerte en permanence. On se base donc sur
+    des signaux bien plus spécifiques : le TITRE de l'onglet, et le texte
+    réellement VISIBLE à l'écran, pas le code source complet.
+    """
     try:
-        contenu = page.content().lower()
+        titre = (page.title() or "").lower()
+    except Exception:
+        titre = ""
+
+    titres_suspects = [
+        "just a moment",
+        "attention required",
+        "access denied",
+        "are you a robot",
+        "are you human",
+        "security check",
+        "checking your browser",
+        "vérification de sécurité",
+    ]
+    if any(t in titre for t in titres_suspects):
+        return True
+
+    try:
+        texte_visible = page.inner_text("body").lower()
     except Exception:
         return False
 
-    indicateurs = [
-        "captcha",
-        "access denied",
-        "accès refusé",
-        "unusual traffic",
-        "trafic inhabituel",
+    phrases_suspectes = [
         "veuillez patienter pendant que nous vérifions",
+        "confirmez que vous êtes humain",
+        "trafic inhabituel détecté",
+        "unusual traffic from your computer",
     ]
-    return any(indicateur in contenu for indicateur in indicateurs)
+    return any(phrase in texte_visible for phrase in phrases_suspectes)
 
 
 # ========================================================================
