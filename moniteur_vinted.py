@@ -633,14 +633,27 @@ def filtrer_par_mots_cles(annonces: list[dict], recherche: dict) -> list[dict]:
 # ========================================================================
 
 def verifier_statut_annonce(page, url_annonce: str) -> str:
-    """Visite la page d'une annonce précise pour déterminer si elle est encore
-    active, vendue, ou supprimée/indisponible.
+    """Visite la page d'une annonce précise pour déterminer si elle a
+    réellement disparu de Vinted (page supprimée/introuvable) ou si elle est
+    encore en ligne.
 
-    Cette vérification directe évite les faux positifs : une annonce qui a
-    simplement glissé au-delà de la dernière page surveillée (parce que de
-    nouvelles annonces sont arrivées devant elle) n'est PAS une vente.
+    Cette vérification directe évite les faux positifs liés à la pagination :
+    une annonce qui a simplement glissé au-delà de la dernière page
+    surveillée (parce que de nouvelles annonces sont arrivées devant elle)
+    n'est PAS une disparition réelle.
 
-    Renvoie : "active", "vendu", "indisponible" ou "inconnu".
+    Important — limite connue et assumée : ce script NE TENTE PAS de
+    distinguer "vendue" de "retirée par le vendeur" en cherchant un mot
+    comme "vendu" dans la page. Une première version le faisait, et ça s'est
+    révélé peu fiable en pratique (le mot apparaît ailleurs sur la page —
+    vraisemblablement les statistiques du profil du vendeur, du type
+    « X articles vendus » — même quand CETTE annonce précise est encore en
+    vente), ce qui provoquait de fausses alertes. Mieux vaut ne pas conclure
+    que se tromper : si l'annonce est encore accessible normalement, elle
+    reste simplement suivie (voir marquer_verifie_toujours_actif) plutôt que
+    d'être déclarée vendue à tort.
+
+    Renvoie : "active", "indisponible" ou "inconnu".
     """
     try:
         page.goto(url_annonce, wait_until="domcontentloaded", timeout=20000)
@@ -654,16 +667,14 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
         raise BlocageDetecte()
 
     try:
-        contenu = page.content().lower()
+        texte_visible = page.inner_text("body").lower()
     except Exception:
         return "inconnu"
 
-    # Vinted affiche généralement un badge "Vendu" sur la photo d'une annonce vendue.
-    if "vendu" in contenu or "sold" in contenu:
-        return "vendu"
-
-    # Note : ces formulations sont une estimation raisonnable et peuvent nécessiter
-    # un ajustement si Vinted change le texte exact de ses messages d'erreur.
+    # Texte réellement VISIBLE à l'écran uniquement (pas tout le code source),
+    # pour limiter le risque de faux positif. Ces formulations sont une
+    # estimation raisonnable et peuvent nécessiter un ajustement si Vinted
+    # change le texte exact de ses messages d'erreur.
     indicateurs_indisponible = [
         "cet article n'est plus disponible",
         "cette annonce n'existe plus",
@@ -671,7 +682,7 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
         "page introuvable",
         "page non trouvée",
     ]
-    if any(indicateur in contenu for indicateur in indicateurs_indisponible):
+    if any(indicateur in texte_visible for indicateur in indicateurs_indisponible):
         return "indisponible"
 
     return "active"
@@ -709,10 +720,11 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
         pause_aleatoire(2.0, 5.0)
         statut = verifier_statut_annonce(page, annonce["url"])  # BlocageDetecte remonte naturellement
 
-        if statut == "vendu":
-            confirmer_disparition(bd, nom_recherche, annonce, "vendu", config)
-        elif statut == "indisponible":
-            confirmer_disparition(bd, nom_recherche, annonce, "indisponible (retirée/supprimée)", config)
+        if statut == "indisponible":
+            # On ne peut pas distinguer avec certitude "vendue" de "retirée par
+            # le vendeur" (voir verifier_statut_annonce) : le libellé reste
+            # volontairement neutre plutôt que d'affirmer une vente à tort.
+            confirmer_disparition(bd, nom_recherche, annonce, "disparue (vendue probable, ou retirée par le vendeur)", config)
         elif statut == "active":
             maintenant = datetime.now(timezone.utc).isoformat()
             marquer_verifie_toujours_actif(bd, nom_recherche, annonce["item_id"], maintenant)
