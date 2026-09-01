@@ -110,8 +110,16 @@ dossier (par exemple `Vinted/`), et ouvrez un terminal dans ce dossier.
 Cela évite d'installer les dépendances « globalement » sur votre ordinateur.
 
 ```bash
+# Windows :
+python -m venv .venv
+
+# macOS / Linux :
 python3 -m venv .venv
 ```
+
+⚠️ Sous Windows, utilisez bien `python` et pas `python3` : `python3` déclenche
+presque toujours le faux message Windows qui renvoie vers le Microsoft Store
+(voir le dépannage plus bas), même quand Python est correctement installé.
 
 Puis activez-le :
 
@@ -404,6 +412,27 @@ redémarre le script automatiquement, etc.).
 ---
 
 ## ❓ Dépannage (FAQ)
+
+**Windows : « Python est introuvable ; exécutez sans arguments pour installer
+à partir du Microsoft Store... » et/ou code d'erreur 9009**
+→ Ce n'est pas une erreur du script : Python n'est pas réellement installé
+(ou pas accessible), et Windows affiche son propre message à la place.
+Corrigez dans l'ordre :
+1. Installez Python depuis [python.org/downloads](https://www.python.org/downloads/)
+   (pas depuis le Store) — sur le premier écran de l'installateur, **cochez
+   bien la case « Add python.exe to PATH »**, c'est l'étape la plus souvent
+   oubliée.
+2. Par sécurité, désactivez aussi les faux raccourcis Windows : touche
+   Windows → tapez « alias » → ouvrez « Paramètres des alias d'exécution des
+   applications » → mettez `python.exe` et `python3.exe` sur Désactivé.
+3. **Fermez complètement puis rouvrez** le terminal (un terminal déjà ouvert
+   ne voit pas une installation faite entre-temps).
+4. Vérifiez avec `python --version` (doit afficher un numéro de version).
+5. Refaites les étapes d'installation (venv, `pip install`,
+   `playwright install chromium`) : comme Python ne fonctionnait pas, elles
+   n'avaient rien pu installer la première fois.
+6. Sous Windows, utilisez toujours la commande `python`, jamais `python3`
+   (voir l'encadré à l'étape 2 de l'installation ci-dessus).
 
 **« ModuleNotFoundError » ou erreur d'import au lancement**
 → Vérifiez que l'environnement virtuel est activé (`(.venv)` visible dans le
