@@ -66,6 +66,8 @@ Vinted/
 ├── moniteur_vinted.py     # le script principal (celui que vous lancez)
 ├── config.yaml             # votre configuration (recherches, horaires, notifications...)
 ├── requirements.txt        # liste des dépendances Python à installer
+├── demarrer.sh              # lancement + redémarrage auto (macOS/Linux) — voir "Déploiement"
+├── demarrer.bat             # lancement + redémarrage auto (Windows) — voir "Déploiement"
 ├── README.md                # ce fichier
 │
 # Fichiers créés automatiquement à l'usage (pas besoin d'y toucher) :
@@ -231,10 +233,100 @@ script tourner pendant des heures.
 
 ### Laisser tourner en arrière-plan longtemps
 
-Pour un usage prolongé sans garder le terminal ouvert, vous pouvez par
-exemple utiliser `screen` ou `tmux` sous Linux/macOS, ou le Planificateur de
-tâches / un simple raccourci sous Windows. C'est optionnel : un simple
-terminal ouvert fonctionne très bien pour un usage occasionnel.
+Pour un usage prolongé, voir la section **🚀 Déploiement** juste en dessous.
+
+---
+
+## 🚀 Déploiement : faire tourner le script en continu, sur la durée
+
+Plusieurs façons de faire tourner `moniteur_vinted.py` durablement. Voici la
+recommandation, et pourquoi.
+
+### 🏆 Recommandation : sur votre propre ordinateur
+
+Pour un outil personnel et discret comme celui-ci, **mieux vaut le laisser
+tourner sur votre PC/Mac plutôt que sur un serveur loué (VPS)**, pour deux
+raisons :
+
+1. **C'est déjà prêt** : vous avez tout installé selon les étapes
+   précédentes, aucune manipulation supplémentaire n'est nécessaire.
+2. **C'est plus discret.** Votre ordinateur utilise l'adresse IP de votre
+   connexion internet personnelle (une IP « résidentielle »), exactement
+   comme n'importe quel visiteur ordinaire de Vinted. Un serveur loué (VPS)
+   utilise à l'inverse une adresse IP de centre de données — un type
+   d'adresse que les systèmes anti-fraude des sites web associent bien plus
+   souvent à des robots ou du scraping, donc plus facilement suspecté. Pour
+   un objectif de discrétion, votre propre connexion est donc un meilleur
+   choix technique, pas seulement le plus simple.
+
+L'inconvénient : votre ordinateur doit rester allumé (et ne pas se mettre en
+veille) pendant que la surveillance tourne.
+
+#### Empêcher la mise en veille
+
+- **Windows** : Paramètres → Système → Alimentation → mettez « Mise en
+  veille » sur « Jamais » (au moins pendant vos sessions de surveillance).
+- **macOS** : Réglages Système → Économiseur d'énergie → décochez la mise en
+  veille automatique. Astuce : `caffeinate -i ./demarrer.sh` empêche la
+  veille uniquement pendant que le script tourne.
+- **Linux** : selon l'environnement de bureau, Paramètres → Énergie.
+
+#### Redémarrage automatique en cas de plantage
+
+Deux petits scripts sont fournis pour relancer automatiquement le moniteur
+s'il s'arrête de façon inattendue (un Ctrl+C reste, lui, un arrêt volontaire
+et propre, sans redémarrage) :
+
+- **Windows** : double-cliquez sur `demarrer.bat`.
+- **macOS / Linux** :
+  ```bash
+  chmod +x demarrer.sh   # une seule fois
+  ./demarrer.sh
+  ```
+
+#### Continuer même en fermant la fenêtre de terminal (macOS/Linux)
+
+Lancez-le dans une session `tmux` (ou `screen`), qui continue à tourner même
+si vous fermez le terminal :
+
+```bash
+tmux new -s vinted       # crée une session nommée "vinted"
+./demarrer.sh
+# puis Ctrl+B, relâchez, puis D pour « détacher » la session (ça continue en arrière-plan)
+# pour revenir plus tard : tmux attach -t vinted
+```
+
+Sous Windows, le plus simple est de laisser la fenêtre de `demarrer.bat`
+ouverte (éventuellement réduite dans la barre des tâches), ou d'utiliser le
+Planificateur de tâches pour le lancer automatiquement à l'ouverture de
+session.
+
+### 🏠 Alternative pour du vrai 24h/24 : un mini-PC ou Raspberry Pi à la maison
+
+Si vous voulez une disponibilité continue sans laisser votre PC principal
+allumé, un petit ordinateur dédié à la maison (mini-PC, vieux PC recyclé, ou
+Raspberry Pi) est une bonne option : toujours allumé, mais toujours sur
+**votre propre** adresse IP résidentielle (donc toujours discret), et sans
+abonnement mensuel. Suivez les mêmes étapes d'installation que dans ce
+README.
+
+⚠️ Cas particulier du Raspberry Pi : Playwright y fonctionne, mais le
+support de Chromium sur processeur ARM y est moins mature et éprouvé que sur
+un PC classique (Intel/AMD), et l'installation peut demander un peu plus de
+patience et de dépannage. Si vous n'êtes pas à l'aise avec ça, un vieux
+PC/mini-PC classique sera plus simple à mettre en route.
+
+### ☁️ Un serveur distant (VPS) : possible, mais pas mon premier conseil ici
+
+Un VPS (quelques euros par mois chez des hébergeurs comme Hetzner, OVH,
+Scaleway...) fonctionne techniquement très bien pour ce script, et a un vrai
+avantage : une disponibilité 24h/24 indépendante de votre matériel
+personnel. Mais pour ce script précis, dont l'objectif affiché est la
+discrétion, l'inconvénient de l'IP de centre de données mentionné plus haut
+joue contre ce choix. Si malgré tout vous préférez cette option (par exemple
+si vous avez déjà un VPS pour autre chose), dites-le-moi : je peux détailler
+l'installation (dépendances système Linux pour Chromium, service qui
+redémarre le script automatiquement, etc.).
 
 ---
 
