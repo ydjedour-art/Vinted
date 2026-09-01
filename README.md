@@ -72,6 +72,9 @@ Vinted/
 ├── requirements.txt        # liste des dépendances Python à installer
 ├── demarrer.sh              # lancement + redémarrage auto (macOS/Linux) — voir "Déploiement"
 ├── demarrer.bat             # lancement + redémarrage auto (Windows) — voir "Déploiement"
+├── tableau_de_bord.py       # interface web locale pour consulter les résultats (voir "Comprendre les résultats")
+├── tableau_de_bord.sh        # lance le tableau de bord (macOS/Linux)
+├── tableau_de_bord.bat       # lance le tableau de bord (Windows)
 ├── README.md                # ce fichier
 │
 # Fichiers créés automatiquement à l'usage (pas besoin d'y toucher) :
@@ -389,6 +392,30 @@ redémarre le script automatiquement, etc.).
   curieux, vous pouvez l'ouvrir avec l'outil gratuit
   [DB Browser for SQLite](https://sqlitebrowser.org/) — aucune compétence de
   code n'est nécessaire, c'est une interface graphique simple.
+
+### 🖥️ Le tableau de bord — une vraie interface, dans votre navigateur
+
+Si le terminal ne vous parle pas, `tableau_de_bord.py` est une **application
+séparée** qui affiche les mêmes données joliment, dans une page web sur
+votre ordinateur (rien n'est envoyé sur internet) : cartes de statistiques,
+tableau par catégorie, dernières ventes détectées avec un badge ⚡ pour les
+plus rapides. Elle se contente de LIRE `vinted_monitor.db` — elle ne touche
+jamais à Vinted, ne modifie rien, et peut tourner en même temps que le
+moniteur, dans une deuxième fenêtre.
+
+**Pour la lancer** :
+- **Windows** : double-cliquez sur `tableau_de_bord.bat`
+- **macOS/Linux** :
+  ```bash
+  chmod +x tableau_de_bord.sh   # une seule fois
+  ./tableau_de_bord.sh
+  ```
+
+Votre navigateur s'ouvre automatiquement sur `http://localhost:8080` — la
+page se rafraîchit toute seule toutes les 30 secondes. Laissez cette fenêtre
+ouverte tant que vous voulez consulter le tableau de bord ; fermez-la (ou
+Ctrl+C) quand vous n'en avez plus besoin, ça n'affecte pas le moniteur qui
+continue de tourner de son côté.
 
 ---
 
