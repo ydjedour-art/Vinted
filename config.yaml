@@ -35,11 +35,6 @@
 # ci-dessous (même indentation) et changez juste le nom et l'url. Autant de
 # blocs que vous voulez.
 #
-# "prix_minimum_possibles" est optionnel PAR catégorie : si une catégorie se
-# vend typiquement à des prix très différents des autres (ex : livres bien
-# moins chers que des sacs à main), donnez-lui sa propre liste de prix ici —
-# sinon elle utilise la liste générale définie plus bas (section 3).
-#
 recherches:
   - nom: "Tendance 60-120€"
     url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=120&currency=EUR"
@@ -47,7 +42,6 @@ recherches:
     page_fin: 11
     inclure_mots_cles: []
     exclure_mots_cles: []
-    prix_minimum_possibles: [55, 60, 65]   # centré sur le prix minimum que vous aviez utilisé (60€) — modifiable
 
   - nom: "Vêtements Homme"
     url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
@@ -55,7 +49,6 @@ recherches:
     page_fin: 15
     inclure_mots_cles: []
     exclure_mots_cles: []
-    prix_minimum_possibles: [15, 20, 25]   # basé sur votre recherche d'origine (20€) — modifiable si besoin
 
   # Recherche mise de côté (lien pas encore renseigné) — décommentez et
   # complétez l'url quand vous voulez l'activer, ça ne bloque rien en
@@ -68,8 +61,7 @@ recherches:
   #   exclure_mots_cles: ["réplique", "copie", "inspiré de"]
 
   # Dupliquez ce type de bloc autant de fois que nécessaire pour couvrir
-  # toutes vos catégories (copiez les lignes, collez, modifiez nom + url, et
-  # ajoutez/retirez la ligne prix_minimum_possibles selon le besoin) :
+  # toutes vos catégories (copiez les lignes, collez, modifiez nom + url) :
   # - nom: "Une autre catégorie"
   #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
   #   page_debut: 9
@@ -95,14 +87,11 @@ rotation: true
 
 
 # --------------------------------------------------------------------------
-# 3) PRIX MINIMUM PAR DÉFAUT (choisi au hasard à chaque cycle, comme demandé)
+# 3) PRIX MINIMUM (fixe, appliqué à toutes les catégories)
 # --------------------------------------------------------------------------
-# Pour chaque recherche traitée, le script choisit au hasard UNE valeur dans
-# cette liste et l'applique comme prix minimum (price_from) — SAUF si cette
-# recherche a sa propre liste "prix_minimum_possibles" (voir section 1
-# ci-dessus, ex : la catégorie "Livres"), auquel cas c'est celle-là qui est
-# utilisée à la place.
-prix_minimum_possibles: [38, 40, 43]
+# Une seule valeur, appliquée telle quelle (price_from) à chaque recherche,
+# à chaque cycle. Modifiez juste ce nombre pour changer le seuil partout.
+prix_minimum: 30
 
 
 # --------------------------------------------------------------------------

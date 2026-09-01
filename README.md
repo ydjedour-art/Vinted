@@ -42,20 +42,18 @@ utiliser ce script.
 ## 🧠 Comment ça marche, en résumé
 
 À chaque cycle, le script :
-1. Choisit **au hasard** un prix minimum parmi ceux que vous avez définis
-   (par défaut 38 €, 40 € ou 43 €) ;
-2. Ouvre un vrai navigateur (Chromium) et charge vos recherches Vinted,
-   triées par **« Plus récent »**, avec ce prix minimum, sur les pages que
-   vous avez choisi de surveiller (par exemple 9 à 15) ;
-3. Note les annonces visibles (identifiant, titre, prix, lien) ;
-4. Compare avec ce qui avait été vu au cycle précédent ;
-5. Pour toute annonce qui a disparu de la zone surveillée, va vérifier
-   directement sa page pour confirmer qu'elle est bien **vendue** (et pas
-   juste repoussée plus loin par de nouvelles annonces) ;
-6. Affiche une alerte dans le terminal (et, si configuré, sur Discord/Telegram)
+1. Ouvre un vrai navigateur (Chromium) et charge vos recherches Vinted,
+   triées par **« Plus récent »**, avec votre prix minimum fixe, sur les
+   pages que vous avez choisi de surveiller (par exemple 9 à 15) ;
+2. Note les annonces visibles (identifiant, titre, prix, lien) ;
+3. Compare avec ce qui avait été vu au cycle précédent ;
+4. Pour toute annonce qui a disparu de la zone surveillée, va vérifier
+   directement sa page pour confirmer qu'elle a vraiment disparu de Vinted
+   (et pas juste repoussée plus loin par de nouvelles annonces) ;
+5. Affiche une alerte dans le terminal (et, si configuré, sur Discord/Telegram)
    avec une estimation du temps écoulé entre la première observation et la
    disparition ;
-7. Attend un temps aléatoire (8 à 15 minutes par défaut) avant de recommencer,
+6. Attend un temps aléatoire (8 à 15 minutes par défaut) avant de recommencer,
    sauf la nuit (aucune activité entre minuit et 7h par défaut).
 
 ⏱️ **Important à comprendre** : la « vitesse de vente » affichée est une
@@ -207,19 +205,9 @@ catégories, moins chacune est revérifiée souvent (10 catégories + cycle
 
 ### Prix minimum
 
-`prix_minimum_possibles: [38, 40, 43]` (section 3 de `config.yaml`) — le
-script en tire un au hasard à chaque cycle, pour la recherche traitée. Vous
-pouvez ajouter/retirer des valeurs.
-
-Si une catégorie se vend à des prix très différents des autres (des livres
-se vendent bien moins cher que des sacs à main, par exemple), donnez-lui sa
-propre liste directement dans son bloc, sous `recherches:` :
-```yaml
-  - nom: "Livres"
-    url: "..."
-    prix_minimum_possibles: [15, 20, 25]   # remplace la liste générale, pour cette catégorie uniquement
-```
-Une recherche sans cette ligne utilise simplement la liste générale.
+`prix_minimum: 30` (section 3 de `config.yaml`) — une seule valeur fixe,
+appliquée à toutes les recherches, à chaque cycle. Changez juste ce nombre
+pour ajuster le seuil.
 
 ### Notifications Discord (optionnel)
 

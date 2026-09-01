@@ -116,8 +116,8 @@ def valider_configuration(config: dict) -> None:
                 f"❌ Recherche « {recherche['nom']} » : 'page_debut' doit être inférieur ou égal à 'page_fin'."
             )
 
-    if not config.get("prix_minimum_possibles"):
-        raise SystemExit("❌ La liste 'prix_minimum_possibles' est vide ou absente dans config.yaml.")
+    if config.get("prix_minimum") is None:
+        raise SystemExit("❌ 'prix_minimum' est absent de config.yaml.")
 
     intervalle = config.get("intervalle_minutes", {})
     if not intervalle.get("min") or not intervalle.get("max"):
@@ -925,14 +925,11 @@ def attendre(duree_secondes: float, config: dict) -> None:
 # SECTION 11 — UN CYCLE DE SURVEILLANCE
 # ========================================================================
 
-def choisir_prix_minimum(recherche: dict, config: dict) -> int:
-    """Choisit au hasard le prix minimum à appliquer pour cette recherche, lors
-    de ce cycle. Une recherche peut définir sa propre liste de prix possibles
-    (utile quand des catégories très différentes se vendent à des gammes de
-    prix très différentes, ex : livres vs sacs à main) ; à défaut, on utilise
-    la liste globale 'prix_minimum_possibles' définie en haut de config.yaml."""
-    liste = recherche.get("prix_minimum_possibles") or config["prix_minimum_possibles"]
-    return random.choice(liste)
+def obtenir_prix_minimum(config: dict) -> int:
+    """Renvoie le prix minimum fixe à appliquer, défini une fois pour toutes
+    dans config.yaml ('prix_minimum'). Le même prix minimum s'applique à
+    toutes les recherches, à chaque cycle."""
+    return config["prix_minimum"]
 
 
 def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sqlite3.Connection) -> None:
@@ -1002,8 +999,8 @@ def executer_cycle(config: dict, bd: sqlite3.Connection, chemin_storage_state: s
         page = contexte.new_page()
 
         try:
+            prix_min = obtenir_prix_minimum(config)
             for recherche in recherches_du_cycle:
-                prix_min = choisir_prix_minimum(recherche, config)
                 try:
                     traiter_recherche(page, recherche, prix_min, config, bd)
                 except BlocageDetecte:
@@ -1069,7 +1066,7 @@ def main() -> None:
     logging.info("=" * 60)
     logging.info("🚀 Démarrage du moniteur Vinted")
     logging.info(f"   Recherches configurées  : {len(config['recherches'])}")
-    logging.info(f"   Prix minimum possibles   : {config['prix_minimum_possibles']}")
+    logging.info(f"   Prix minimum (fixe)      : {config['prix_minimum']} €")
     logging.info(
         f"   Astuce : créez un fichier nommé '{config.get('fichier_pause', 'PAUSE')}' pour "
         "mettre en pause, Ctrl+C pour arrêter proprement."
