@@ -1,0 +1,21 @@
+# Fichiers générés automatiquement par le moniteur Vinted — inutile (et pas
+# souhaitable) de les suivre dans git : ils contiennent des données locales
+# qui changent à chaque exécution.
+vinted_monitor.db
+vinted_monitor.log
+vinted_monitor.log.*
+storage_state.json
+PAUSE
+
+# Environnement virtuel Python (voir README, étape d'installation)
+.venv/
+venv/
+env/
+
+# Fichiers Python courants
+__pycache__/
+*.pyc
+
+# Fichiers système
+.DS_Store
+Thumbs.db

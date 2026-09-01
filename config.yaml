@@ -1,0 +1,161 @@
+# ==========================================================================
+#  CONFIGURATION DU MONITEUR VINTED
+# ==========================================================================
+#
+# Ce fichier contrôle tout le comportement du script (moniteur_vinted.py).
+# Vous pouvez le modifier avec n'importe quel éditeur de texte simple
+# (Bloc-notes, TextEdit, VS Code...). Respectez bien les espaces
+# d'indentation (le format YAML y est sensible) : le plus simple est de
+# copier une ligne existante et de modifier seulement le texte utile.
+#
+# Après chaque modification, vous pouvez tester avec :
+#     python moniteur_vinted.py --une-fois
+# ==========================================================================
+
+
+# --------------------------------------------------------------------------
+# 1) RECHERCHES À SURVEILLER
+# --------------------------------------------------------------------------
+# Vous pouvez surveiller une ou plusieurs recherches. Pour obtenir l'URL
+# d'une recherche :
+#   1. Allez sur vinted.fr et configurez votre recherche (catégorie, marque,
+#      taille, état, texte recherché...) — SAUF le tri et le prix minimum,
+#      qui sont gérés automatiquement par le script à chaque cycle.
+#   2. Copiez l'adresse complète depuis la barre du navigateur.
+#   3. Collez-la ci-dessous dans le champ "url".
+#
+# Champs de chaque recherche :
+#   nom                : un nom court, juste pour vous repérer dans les logs
+#   url                : l'URL de recherche Vinted copiée depuis votre navigateur
+#   page_debut/page_fin: la plage de pages à observer (ex. 9 à 15, comme demandé,
+#                        pour éviter le bruit des toutes nouvelles annonces en page 1)
+#   inclure_mots_cles  : (optionnel) l'annonce doit contenir au moins un de ces mots
+#   exclure_mots_cles  : (optionnel) l'annonce est ignorée si elle contient un de ces mots
+#
+recherches:
+  - nom: "Exemple - Sacs à main"
+    url: "https://www.vinted.fr/catalog?search_text=sac&catalog[]=1904"
+    page_debut: 9
+    page_fin: 15
+    inclure_mots_cles: []
+    exclure_mots_cles: ["réplique", "copie", "inspiré de"]
+
+  # Décommentez et adaptez pour ajouter une deuxième recherche :
+  # - nom: "Exemple - Baskets Nike"
+  #   url: "https://www.vinted.fr/catalog?search_text=nike&catalog[]=1231"
+  #   page_debut: 9
+  #   page_fin: 12
+  #   inclure_mots_cles: []
+  #   exclure_mots_cles: []
+
+
+# --------------------------------------------------------------------------
+# 2) PRIX MINIMUM (choisi au hasard à chaque cycle, comme demandé)
+# --------------------------------------------------------------------------
+# À chaque cycle, le script choisit au hasard UNE valeur dans cette liste et
+# l'applique comme prix minimum (price_from) sur toutes les recherches.
+prix_minimum_possibles: [38, 40, 43]
+
+
+# --------------------------------------------------------------------------
+# 3) RYTHME DE SURVEILLANCE
+# --------------------------------------------------------------------------
+# Entre deux cycles, le script attend un temps aléatoire tiré entre "min" et
+# "max" (en minutes). Gardez des valeurs raisonnables : plus c'est fréquent,
+# plus l'activité est repérable.
+intervalle_minutes:
+  min: 8
+  max: 15
+
+
+# --------------------------------------------------------------------------
+# 4) FUSEAU HORAIRE
+# --------------------------------------------------------------------------
+# Utilisé pour la pause nocturne et pour l'affichage des heures dans les
+# alertes. Laissez "Europe/Paris" si vous n'êtes pas sûr.
+fuseau_horaire: "Europe/Paris"
+
+
+# --------------------------------------------------------------------------
+# 5) PAUSE NOCTURNE
+# --------------------------------------------------------------------------
+# Aucune activité pendant cette plage horaire (par défaut minuit -> 7h),
+# pour rester discret et ne pas avoir un comportement disponible 24h/24.
+pause_nocturne:
+  active: true
+  heure_debut: 0   # 0 = minuit
+  heure_fin: 7     # 7 = 7h du matin
+
+
+# --------------------------------------------------------------------------
+# 6) NAVIGATEUR
+# --------------------------------------------------------------------------
+navigateur:
+  headless: true        # true = pas de fenêtre visible ; false = fenêtre visible (pratique pour observer/déboguer)
+  canal: "chromium"      # "chromium" (fourni avec Playwright) ou "chrome" (votre Google Chrome installé)
+  largeur_fenetre: 1366
+  hauteur_fenetre: 768
+
+
+# --------------------------------------------------------------------------
+# 7) VÉRIFICATION AVANT DE CONSIDÉRER UNE ANNONCE COMME VENDUE
+# --------------------------------------------------------------------------
+# Quand une annonce suivie n'apparaît plus dans la zone surveillée, cela peut
+# vouloir dire qu'elle a été vendue... ou simplement qu'elle a glissé au-delà
+# de la dernière page surveillée (de nouvelles annonces sont passées devant).
+# En activant cette vérification, le script visite directement la page de
+# l'annonce pour confirmer avant de l'annoncer comme vendue (recommandé).
+verification_avant_disparition:
+  active: true
+  max_verifications_par_cycle: 8   # limite le nombre de pages-annonces vérifiées par cycle
+
+
+# --------------------------------------------------------------------------
+# 8) SI VINTED SEMBLE BLOQUER LE SCRIPT (CAPTCHA, page de blocage...)
+# --------------------------------------------------------------------------
+# Le script ne cherche jamais à forcer le passage : il s'arrête et attend
+# ce nombre de minutes avant de réessayer.
+pause_si_blocage_minutes: 60
+
+
+# --------------------------------------------------------------------------
+# 9) NOTIFICATIONS
+# --------------------------------------------------------------------------
+# Le résumé s'affiche toujours dans le terminal. Discord/Telegram sont
+# optionnels, à activer seulement si vous voulez aussi une notification sur
+# votre téléphone/PC en dehors du terminal.
+notifications:
+  discord:
+    active: false
+    webhook_url: ""     # voir le README pour savoir comment créer un webhook Discord
+  telegram:
+    active: false
+    bot_token: ""        # voir le README pour savoir comment créer un bot Telegram
+    chat_id: ""
+  # Notifie seulement si la vente a eu lieu en moins de X minutes après la
+  # première observation. Laissez "null" (vide) pour toujours notifier.
+  seuil_vente_rapide_minutes: 240
+
+
+# --------------------------------------------------------------------------
+# 10) STOCKAGE (fichiers créés automatiquement par le script)
+# --------------------------------------------------------------------------
+stockage:
+  base_donnees: "vinted_monitor.db"          # mémoire des annonces déjà vues (SQLite)
+  session_navigateur: "storage_state.json"    # cookies/session, pour ne pas repartir de zéro à chaque cycle
+
+
+# --------------------------------------------------------------------------
+# 11) LOGS
+# --------------------------------------------------------------------------
+logs:
+  fichier: "vinted_monitor.log"
+  niveau: "INFO"   # DEBUG (très détaillé), INFO (recommandé), WARNING, ERROR
+
+
+# --------------------------------------------------------------------------
+# 12) PAUSE MANUELLE
+# --------------------------------------------------------------------------
+# Pour mettre le script en pause sans l'arrêter : créez un fichier vide avec
+# ce nom dans le même dossier. Supprimez-le pour reprendre. Voir le README.
+fichier_pause: "PAUSE"
