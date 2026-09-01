@@ -49,13 +49,13 @@ recherches:
     exclure_mots_cles: []
     prix_minimum_possibles: [55, 60, 65]   # centré sur le prix minimum que vous aviez utilisé (60€) — modifiable
 
-  - nom: "Livres"
+  - nom: "Vêtements Homme"
     url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
     page_debut: 9
     page_fin: 15
     inclure_mots_cles: []
     exclure_mots_cles: []
-    prix_minimum_possibles: [15, 20, 25]   # les livres se vendent moins cher : liste propre à cette catégorie
+    prix_minimum_possibles: [15, 20, 25]   # basé sur votre recherche d'origine (20€) — modifiable si besoin
 
   # Recherche mise de côté (lien pas encore renseigné) — décommentez et
   # complétez l'url quand vous voulez l'activer, ça ne bloque rien en
