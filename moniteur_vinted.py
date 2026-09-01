@@ -297,7 +297,22 @@ def creer_contexte(navigateur, config: dict, chemin_storage_state: str):
     if os.path.exists(chemin_storage_state):
         parametres["storage_state"] = chemin_storage_state
 
-    return navigateur.new_context(**parametres)
+    contexte = navigateur.new_context(**parametres)
+
+    # Les navigateurs pilotés par automatisation (Playwright, Selenium...)
+    # exposent par défaut `navigator.webdriver = true`, une propriété que
+    # certains sites lisent pour repérer instantanément un navigateur
+    # automatisé — avant même d'avoir observé le moindre comportement. Cette
+    # propriété vaut `undefined` chez un vrai navigateur classique ; on
+    # aligne notre navigateur dessus. Il ne s'agit pas de forcer le passage
+    # d'un blocage actif (le script continue de reculer face à un vrai
+    # CAPTCHA, voir page_bloquee_ou_captcha), seulement de ne pas trahir
+    # gratuitement l'outil par un simple réglage par défaut.
+    contexte.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+    )
+
+    return contexte
 
 
 def gerer_bandeau_cookies(page) -> None:

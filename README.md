@@ -20,10 +20,16 @@ site). Malgré cela :
   raisonnable, à faible fréquence et sur un petit nombre de recherches.
   **Vous restez seul responsable** de la façon dont vous l'utilisez.
 - Vinted peut, à tout moment, limiter ou bloquer un comportement qu'il juge
-  automatisé (temporairement ou plus durablement). Le script est conçu pour
-  **reculer et attendre** s'il détecte un blocage — jamais pour forcer le
-  passage (pas de CAPTCHA à contourner, pas de changement d'adresse IP, etc.).
-  Si cela arrive, c'est un signal pour réduire la fréquence, pas pour insister.
+  automatisé (temporairement ou plus durablement). Le script évite les
+  réglages par défaut les plus grossiers qui trahiraient l'automatisation
+  avant même tout comportement (ex : l'indicateur `navigator.webdriver`,
+  activé par défaut dans tout outil d'automatisation de navigateur — y
+  compris pour des usages parfaitement légitimes comme les tests
+  automatisés). Mais face à un blocage actif une fois détecté (CAPTCHA,
+  page de vérification...), il est conçu pour **reculer et attendre**,
+  jamais pour forcer le passage : pas de résolution de CAPTCHA, pas de
+  changement d'adresse IP, pas d'acharnement. Si cela arrive, c'est un
+  signal pour réduire la fréquence, pas pour insister.
 - Ne partagez jamais publiquement un fichier `config.yaml` déjà rempli avec
   un vrai webhook Discord ou un vrai token Telegram (voir la section
   Notifications plus bas).
