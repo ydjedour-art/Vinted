@@ -36,8 +36,8 @@
 # blocs que vous voulez.
 #
 recherches:
-  - nom: "Tendance 60-120€"
-    url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=120&currency=EUR"
+  - nom: "Catégorie 2050"   # renommez comme vous voulez, ça n'affecte que l'affichage dans les logs
+    url: "https://www.vinted.fr/catalog?catalog[]=2050&currency=EUR"
     page_debut: 4
     page_fin: 11
     inclure_mots_cles: []
