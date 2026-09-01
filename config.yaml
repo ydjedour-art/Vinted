@@ -43,8 +43,8 @@
 recherches:
   - nom: "Tendance 60-120€"
     url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=120&currency=EUR"
-    page_debut: 9
-    page_fin: 15
+    page_debut: 4
+    page_fin: 11
     inclure_mots_cles: []
     exclure_mots_cles: []
     prix_minimum_possibles: [55, 60, 65]   # centré sur le prix minimum que vous aviez utilisé (60€) — modifiable
