@@ -365,7 +365,15 @@ def defilement_naturel(page) -> None:
 
 def lancer_navigateur(playwright, config: dict):
     cfg_nav = config.get("navigateur", {})
-    parametres = {"headless": cfg_nav.get("headless", True)}
+    parametres = {
+        "headless": cfg_nav.get("headless", True),
+        # Désactive l'accélération graphique : sur certaines machines (pilote
+        # graphique absent/instable), Chromium en mode headless peut planter
+        # en cours de route à cause d'erreurs GPU (visible dans les logs sous
+        # la forme "No available adapters" / erreurs ANGLE). On n'a de toute
+        # façon besoin d'aucun rendu graphique pour lire une page web.
+        "args": ["--disable-gpu"],
+    }
 
     canal = cfg_nav.get("canal", "chromium")
     if canal and canal.lower() != "chromium":
@@ -999,8 +1007,17 @@ def executer_cycle(config: dict, bd: sqlite3.Connection, chemin_storage_state: s
                 contexte.storage_state(path=chemin_storage_state)
             except Exception as erreur:
                 logging.debug(f"Impossible de sauvegarder la session : {erreur}")
-            contexte.close()
-            navigateur.close()
+            # Le navigateur a pu planter/se fermer tout seul entre-temps (crash
+            # du processus, par exemple) : dans ce cas .close() lève une erreur
+            # sans intérêt puisqu'il n'y a de toute façon plus rien à fermer.
+            try:
+                contexte.close()
+            except Exception as erreur:
+                logging.debug(f"Fermeture du contexte déjà inutile : {erreur}")
+            try:
+                navigateur.close()
+            except Exception as erreur:
+                logging.debug(f"Fermeture du navigateur déjà inutile : {erreur}")
 
     return bloque
 
