@@ -41,13 +41,13 @@
 # sinon elle utilise la liste générale définie plus bas (section 3).
 #
 recherches:
-  - nom: "Sacs à main"
-    url: "REMETTEZ ICI VOTRE LIEN VINTED (sacs à main) — retournez sur vinted.fr, refaites la recherche, recopiez le lien"
+  - nom: "Tendance 60-120€"
+    url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=120&currency=EUR"
     page_debut: 9
     page_fin: 15
     inclure_mots_cles: []
-    exclure_mots_cles: ["réplique", "copie", "inspiré de"]
-    # Pas de prix_minimum_possibles ici -> utilise la liste générale [38, 40, 43]
+    exclure_mots_cles: []
+    prix_minimum_possibles: [55, 60, 65]   # centré sur le prix minimum que vous aviez utilisé (60€) — modifiable
 
   - nom: "Livres"
     url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
@@ -55,10 +55,20 @@ recherches:
     page_fin: 15
     inclure_mots_cles: []
     exclure_mots_cles: []
-    prix_minimum_possibles: [15, 20, 25]   # les livres se vendent moins cher que les sacs : liste propre à cette catégorie
+    prix_minimum_possibles: [15, 20, 25]   # les livres se vendent moins cher : liste propre à cette catégorie
 
-  # Dupliquez ce bloc autant de fois que nécessaire pour couvrir toutes vos
-  # catégories (copiez les lignes ci-dessus, collez, modifiez nom + url, et
+  # Recherche mise de côté (lien pas encore renseigné) — décommentez et
+  # complétez l'url quand vous voulez l'activer, ça ne bloque rien en
+  # attendant :
+  # - nom: "Sacs à main"
+  #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
+  #   page_debut: 9
+  #   page_fin: 15
+  #   inclure_mots_cles: []
+  #   exclure_mots_cles: ["réplique", "copie", "inspiré de"]
+
+  # Dupliquez ce type de bloc autant de fois que nécessaire pour couvrir
+  # toutes vos catégories (copiez les lignes, collez, modifiez nom + url, et
   # ajoutez/retirez la ligne prix_minimum_possibles selon le besoin) :
   # - nom: "Une autre catégorie"
   #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
