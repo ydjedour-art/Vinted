@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import http.server
 import os
+import re
 import socketserver
 import sqlite3
 import webbrowser
+from collections import Counter
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -48,13 +50,25 @@ INTERVALLE_RAFRAICHISSEMENT_SECONDES = 30
 # ========================================================================
 
 def charger_reglages() -> dict:
-    reglages = {"base_donnees": "vinted_monitor.db", "fuseau_horaire": "Europe/Paris"}
+    # seuil_vente_rapide_max_minutes : reprend le même seuil que celui utilisé
+    # par moniteur_vinted.py pour les notifications (notifications.
+    # seuil_vente_rapide.max_minutes), pour que le badge "⚡ rapide" affiché
+    # ici corresponde à la même définition de "rapide" — plutôt qu'un seuil
+    # indépendant codé en dur ici. 180 min (3h) si non configuré.
+    reglages = {
+        "base_donnees": "vinted_monitor.db",
+        "fuseau_horaire": "Europe/Paris",
+        "seuil_vente_rapide_max_minutes": 180,
+    }
     if os.path.exists(CHEMIN_CONFIG):
         try:
             with open(CHEMIN_CONFIG, "r", encoding="utf-8") as fichier:
                 config = yaml.safe_load(fichier) or {}
             reglages["base_donnees"] = config.get("stockage", {}).get("base_donnees", reglages["base_donnees"])
             reglages["fuseau_horaire"] = config.get("fuseau_horaire", reglages["fuseau_horaire"])
+            seuil_configure = config.get("notifications", {}).get("seuil_vente_rapide", {}).get("max_minutes")
+            if seuil_configure is not None:
+                reglages["seuil_vente_rapide_max_minutes"] = seuil_configure
         except Exception:
             pass  # on garde les valeurs par défaut si config.yaml pose problème
     return reglages
@@ -93,6 +107,35 @@ def calculer_duree_minutes(debut_iso: str | None, fin_iso: str | None) -> float 
         return (fin - debut).total_seconds() / 60
     except Exception:
         return None
+
+
+# Mots trop courants dans les titres Vinted pour être un signal de tendance
+# utile (état, taille, mots de liaison...). Recopié de moniteur_vinted.py —
+# ce fichier reste volontairement indépendant (aucun import entre les deux)
+# pour rester une simple visionneuse, sans dépendre de Playwright.
+MOTS_IGNORES_TENDANCES = {
+    "état", "etat", "taille", "neuf", "bon", "très", "tres", "avec", "sans",
+    "pour", "dans", "les", "des", "une", "un", "de", "du", "et", "sur",
+    "vintage", "cuir", "coton", "occasion", "comme", "petit", "petite",
+    "grand", "grande", "taches", "tache", "porté", "porte", "fois",
+}
+
+
+def calculer_tendances(curseur: sqlite3.Cursor, limite: int = 12) -> list[tuple[str, int]]:
+    """Mots les plus fréquents dans les titres des annonces confirmées
+    disparues (vendues probable/indisponibles) — un aperçu très simple des
+    marques/styles qui reviennent souvent, sans liste de marques à tenir à
+    jour à la main."""
+    curseur.execute("SELECT titre FROM annonces WHERE statut IN ('vendu', 'indisponible')")
+    compteur: Counter = Counter()
+    for ligne in curseur.fetchall():
+        titre = ligne["titre"]
+        if not titre:
+            continue
+        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower()):
+            if mot not in MOTS_IGNORES_TENDANCES:
+                compteur[mot] += 1
+    return compteur.most_common(limite)
 
 
 def recuperer_donnees(chemin_bd: str) -> dict | None:
@@ -157,6 +200,8 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
     )
     dernieres_disparitions = [dict(ligne) for ligne in curseur.fetchall()]
 
+    tendances = calculer_tendances(curseur)
+
     connexion.close()
 
     return {
@@ -165,6 +210,7 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
         "vitesse_moyenne_globale": (sum(toutes_durees) / len(toutes_durees)) if toutes_durees else None,
         "stats_par_categorie": stats_par_categorie,
         "dernieres_disparitions": dernieres_disparitions,
+        "tendances": tendances,
     }
 
 
@@ -202,6 +248,9 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .vide { color: var(--texte-att); padding: 2.5rem; text-align: center; background: var(--carte); border-radius: 12px; border: 1px dashed var(--bordure); }
 .titre-annonce { max-width: 320px; }
+.tendances { display: flex; flex-wrap: wrap; gap: .55rem; background: var(--carte); border: 1px solid var(--bordure); border-radius: 12px; padding: 1.1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+.tendance { display: inline-flex; align-items: baseline; gap: .35rem; background: var(--accent-clair); color: var(--accent); padding: .3rem .7rem; border-radius: 999px; font-size: .85rem; font-weight: 600; }
+.tendance .n { color: var(--texte-att); font-weight: 500; font-size: .75rem; }
 """
 
 
@@ -223,7 +272,7 @@ body {{ display: flex; align-items: center; justify-content: center; height: 100
 </body></html>"""
 
 
-def generer_page(donnees: dict, fuseau: ZoneInfo) -> str:
+def generer_page(donnees: dict, fuseau: ZoneInfo, seuil_rapide_max_minutes: float = 180) -> str:
     maintenant = datetime.now(fuseau).strftime("%d/%m/%Y à %H:%M:%S")
 
     lignes_categories = "".join(
@@ -240,7 +289,7 @@ def generer_page(donnees: dict, fuseau: ZoneInfo) -> str:
     for a in donnees["dernieres_disparitions"]:
         duree_min = calculer_duree_minutes(a["premiere_observation"], a["disparition_detectee"])
         prix = f"{a['prix']:.2f} €" if a.get("prix") is not None else "—"
-        rapide = duree_min is not None and duree_min <= 180
+        rapide = duree_min is not None and duree_min <= seuil_rapide_max_minutes
         badge = f'<span class="badge">⚡ rapide</span>' if rapide else ""
         titre = (a.get("titre") or "Titre indisponible")
         lignes_ventes += f"""<tr>
@@ -254,6 +303,16 @@ def generer_page(donnees: dict, fuseau: ZoneInfo) -> str:
 
     if not lignes_ventes:
         lignes_ventes = '<tr><td colspan="6" style="text-align:center;color:var(--texte-att)">Aucune disparition détectée pour l’instant</td></tr>'
+
+    puces_tendances = "".join(
+        f'<span class="tendance">{mot} <span class="n">×{n}</span></span>'
+        for mot, n in donnees["tendances"]
+    )
+    bloc_tendances = (
+        f'<div class="tendances">{puces_tendances}</div>'
+        if puces_tendances
+        else '<div class="vide">Pas encore assez de ventes confirmées pour dégager une tendance</div>'
+    )
 
     return f"""<!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
@@ -282,6 +341,11 @@ def generer_page(donnees: dict, fuseau: ZoneInfo) -> str:
   </section>
 
   <section>
+    <h2>Tendances (mots les plus fréquents parmi les ventes confirmées)</h2>
+    {bloc_tendances}
+  </section>
+
+  <section>
     <h2>Dernières disparitions (vendues probable, ou retirées)</h2>
     <table>
       <thead><tr><th>Annonce</th><th>Prix</th><th>Catégorie</th><th>Vue la 1ère fois</th><th>Disparue le</th><th>Vitesse</th></tr></thead>
@@ -305,7 +369,7 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             contenu = page_attente(reglages["base_donnees"])
         else:
             fuseau = ZoneInfo(reglages["fuseau_horaire"])
-            contenu = generer_page(donnees, fuseau)
+            contenu = generer_page(donnees, fuseau, reglages["seuil_vente_rapide_max_minutes"])
 
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
