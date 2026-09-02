@@ -37,14 +37,14 @@
 #
 recherches:
   - nom: "Vêtements Homme (2050)"
-    url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=200&currency=EUR"
+    url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=84&currency=EUR"
     page_debut: 1
     page_fin: 3
     inclure_mots_cles: []
     exclure_mots_cles: []
 
   - nom: "Vêtements Homme (2312)"
-    url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
+    url: "https://www.vinted.fr/catalog?catalog[]=2312&price_to=84&currency=EUR"
     page_debut: 1
     page_fin: 3
     inclure_mots_cles: []
