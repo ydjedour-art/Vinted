@@ -354,7 +354,7 @@ def defilement_naturel(page) -> None:
 
             pas = random.randint(250, 650)
             page.mouse.wheel(0, pas)
-            pause_aleatoire(0.4, 1.3)
+            pause_aleatoire(0.2, 0.6)
     except Exception as erreur:
         logging.debug(f"Défilement interrompu sans conséquence : {erreur}")
 
@@ -661,7 +661,7 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
         logging.debug(f"   ↳ Impossible d'ouvrir l'annonce pour vérification : {erreur}")
         return "inconnu"
 
-    pause_aleatoire(1.0, 2.5)
+    pause_aleatoire(0.6, 1.5)
 
     if page_bloquee_ou_captcha(page):
         raise BlocageDetecte()
@@ -717,7 +717,7 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
     # passer par une vérification directe, même si le nombre d'annonces en
     # attente dépasse la limite par cycle.
     for annonce in absentes[:max_verifs]:
-        pause_aleatoire(2.0, 5.0)
+        pause_aleatoire(1.0, 2.5)
         statut = verifier_statut_annonce(page, annonce["url"])  # BlocageDetecte remonte naturellement
 
         if statut == "indisponible":
@@ -956,7 +956,7 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
             logging.warning(f"   ⚠️ Erreur au chargement de la page {numero_page} : {erreur}")
             continue
 
-        pause_aleatoire(1.5, 4.0)
+        pause_aleatoire(0.8, 1.8)
 
         if page_bloquee_ou_captcha(page):
             raise BlocageDetecte()
@@ -973,7 +973,7 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
             ids_vus_ce_cycle.add(annonce["id"])
             enregistrer_observation(bd, nom, annonce, maintenant)
 
-        pause_aleatoire(2.0, 6.0)  # pause "lecture" avant de passer à la page suivante
+        pause_aleatoire(1.0, 2.5)  # pause "lecture" avant de passer à la page suivante
 
     traiter_annonces_disparues(page, nom, ids_vus_ce_cycle, config, bd)
 
