@@ -55,6 +55,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -116,8 +117,8 @@ def valider_configuration(config: dict) -> None:
                 f"❌ Recherche « {recherche['nom']} » : 'page_debut' doit être inférieur ou égal à 'page_fin'."
             )
 
-    if config.get("prix_minimum") is None:
-        raise SystemExit("❌ 'prix_minimum' est absent de config.yaml.")
+    # 'prix_minimum' est optionnel : laissez-le vide (ou omettez-le) dans
+    # config.yaml pour ne filtrer par aucun prix minimum.
 
     intervalle = config.get("intervalle_minutes", {})
     if not intervalle.get("min") or not intervalle.get("max"):
@@ -227,6 +228,14 @@ def sauvegarder_etat(bd: sqlite3.Connection, cle: str, valeur: str) -> None:
     bd.commit()
 
 
+def obtenir_tous_les_ids_connus(bd: sqlite3.Connection, recherche: str) -> set[str]:
+    """Renvoie l'ensemble des item_id déjà connus pour cette recherche, tous
+    statuts confondus (active/vendu/indisponible) — sert uniquement à compter
+    les "nouvelles" annonces d'un cycle dans le résumé des logs."""
+    curseur = bd.execute("SELECT item_id FROM annonces WHERE recherche = ?", (recherche,))
+    return {ligne[0] for ligne in curseur.fetchall()}
+
+
 def enregistrer_observation(bd: sqlite3.Connection, recherche: str, annonce: dict, maintenant: str) -> None:
     """Ajoute une annonce vue pour la première fois, ou met à jour sa dernière
     observation si elle était déjà connue (upsert)."""
@@ -264,6 +273,43 @@ def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> lis
     )
     colonnes = [description[0] for description in curseur.description]
     return [dict(zip(colonnes, ligne)) for ligne in curseur.fetchall()]
+
+
+# Mots trop courants dans les titres Vinted pour être un signal de tendance
+# utile (état, taille, mots de liaison...). Liste volontairement simple :
+# à compléter si vous remarquez d'autres mots parasites récurrents.
+MOTS_IGNORES_TENDANCES = {
+    "état", "etat", "taille", "neuf", "bon", "très", "tres", "avec", "sans",
+    "pour", "dans", "les", "des", "une", "un", "de", "du", "et", "sur",
+    "vintage", "cuir", "coton", "occasion", "comme", "petit", "petite",
+    "grand", "grande", "taches", "tache", "porté", "porte", "fois",
+}
+
+
+def calculer_tendances(bd: sqlite3.Connection, recherche: str | None = None, limite: int = 10) -> list[tuple[str, int]]:
+    """Calcule les mots qui reviennent le plus souvent dans les titres des
+    annonces confirmées disparues (vendues/indisponibles) — une approche très
+    simple de "tendances" (marques, styles, modèles qui partent souvent),
+    sans avoir besoin de connaître à l'avance une liste de marques Vinted.
+    Renvoie une liste de (mot, nombre d'occurrences), du plus fréquent au
+    moins fréquent."""
+    if recherche:
+        curseur = bd.execute(
+            "SELECT titre FROM annonces WHERE recherche = ? AND statut IN ('vendu', 'indisponible')",
+            (recherche,),
+        )
+    else:
+        curseur = bd.execute("SELECT titre FROM annonces WHERE statut IN ('vendu', 'indisponible')")
+
+    compteur = Counter()
+    for (titre,) in curseur.fetchall():
+        if not titre:
+            continue
+        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower()):
+            if mot not in MOTS_IGNORES_TENDANCES:
+                compteur[mot] += 1
+
+    return compteur.most_common(limite)
 
 
 def marquer_statut(bd: sqlite3.Connection, recherche: str, item_id: str, statut: str, maintenant: str) -> None:
@@ -490,10 +536,10 @@ def page_bloquee_ou_captcha(page) -> bool:
 # SECTION 6 — CONSTRUCTION DES URLS DE RECHERCHE
 # ========================================================================
 
-def construire_url_recherche(url_base: str, prix_min: int, numero_page: int) -> str:
+def construire_url_recherche(url_base: str, prix_min: int | None, numero_page: int) -> str:
     """Reconstruit l'URL de recherche Vinted en forçant :
        - le tri par "Plus récent"  -> order=newest_first
-       - le prix minimum du cycle -> price_from
+       - le prix minimum du cycle -> price_from (si prix_min n'est pas None)
        - le numéro de page voulu  -> page
     Tous les autres filtres déjà présents dans l'URL fournie par l'utilisateur
     (catégorie, marque, taille, texte recherché, etc.) sont conservés tels quels.
@@ -502,8 +548,14 @@ def construire_url_recherche(url_base: str, prix_min: int, numero_page: int) -> 
     parametres = parse_qs(morceaux.query)
 
     parametres["order"] = ["newest_first"]
-    parametres["price_from"] = [str(prix_min)]
     parametres["page"] = [str(numero_page)]
+
+    if prix_min is None:
+        # Pas de prix minimum configuré : on retire aussi celui qui traînerait
+        # dans l'URL d'origine, pour ne rien filtrer du tout.
+        parametres.pop("price_from", None)
+    else:
+        parametres["price_from"] = [str(prix_min)]
 
     nouvelle_requete = urlencode(parametres, doseq=True)
     return urlunparse(morceaux._replace(query=nouvelle_requete))
@@ -666,15 +718,34 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
     if page_bloquee_ou_captcha(page):
         raise BlocageDetecte()
 
+    # --- Signal 1 : le TITRE de l'onglet. Une page supprimée/introuvable a
+    # souvent un titre distinctif ("Page introuvable", "404"...), assez fiable
+    # car un titre de page change rarement pour une raison anodine.
+    try:
+        titre_page = (page.title() or "").lower()
+    except Exception:
+        titre_page = ""
+
+    titres_indisponible = [
+        "page introuvable",
+        "page non trouvée",
+        "404",
+        "not found",
+        "oups",
+    ]
+    if any(t in titre_page for t in titres_indisponible):
+        return "indisponible"
+
+    # --- Signal 2 : phrases explicites dans le texte réellement VISIBLE à
+    # l'écran (pas tout le code source, pour limiter le risque de faux
+    # positif — voir la mésaventure du mot "vendu" ci-dessus). Ces
+    # formulations sont une estimation raisonnable et peuvent nécessiter un
+    # ajustement si Vinted change le texte exact de ses messages d'erreur.
     try:
         texte_visible = page.inner_text("body").lower()
     except Exception:
         return "inconnu"
 
-    # Texte réellement VISIBLE à l'écran uniquement (pas tout le code source),
-    # pour limiter le risque de faux positif. Ces formulations sont une
-    # estimation raisonnable et peuvent nécessiter un ajustement si Vinted
-    # change le texte exact de ses messages d'erreur.
     indicateurs_indisponible = [
         "cet article n'est plus disponible",
         "cette annonce n'existe plus",
@@ -685,21 +756,38 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
     if any(indicateur in texte_visible for indicateur in indicateurs_indisponible):
         return "indisponible"
 
+    # --- Signal 3 (corroborant seulement, jamais utilisé seul) : sur une
+    # annonce active normale, le bouton "Acheter" et un prix affiché sont
+    # quasiment toujours présents dans le texte visible. Leur absence
+    # SIMULTANÉE est un indice supplémentaire, mais un seul signal fragile
+    # (deviné, non vérifié sur une vraie page Vinted) ne suffit jamais à lui
+    # seul à conclure — voir la note plus haut sur le mot "vendu" : mieux
+    # vaut exiger la convergence de plusieurs signaux que se fier à un seul.
+    correspondance_prix = re.search(r"\d+[.,]\d{2}\s?€", texte_visible)
+    a_bouton_achat = "acheter" in texte_visible
+    if not a_bouton_achat and not correspondance_prix:
+        return "indisponible"
+
     return "active"
 
 
-def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, config: dict, bd: sqlite3.Connection) -> None:
+def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, config: dict, bd: sqlite3.Connection) -> tuple[int, int]:
     """Compare les annonces suivies en base à celles vues pendant ce cycle et
-    vérifie individuellement celles qui semblent avoir disparu."""
+    vérifie individuellement celles qui semblent avoir disparu.
+
+    Renvoie (nombre de "suspectes" ce cycle, nombre confirmées disparues ce
+    cycle) pour le résumé affiché dans les logs."""
     suivies = obtenir_annonces_a_surveiller(bd, nom_recherche)
     absentes = [a for a in suivies if a["item_id"] not in ids_vus_ce_cycle]
+    nb_suspectes = len(absentes)
 
     if not absentes:
-        return
+        return (0, 0)
 
-    logging.info(f"   🔍 {len(absentes)} annonce(s) absente(s) de la zone surveillée, vérification...")
+    logging.info(f"   🔍 {nb_suspectes} annonce(s) suspecte(s) (absente(s) de la zone surveillée), vérification...")
 
     cfg_verif = config.get("verification_avant_disparition", {})
+    nb_confirmees = 0
 
     if not cfg_verif.get("active", True):
         # Mode rapide : on ne vérifie pas individuellement, on considère les
@@ -707,7 +795,8 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
         # sensible aux faux positifs liés à la pagination).
         for annonce in absentes:
             confirmer_disparition(bd, nom_recherche, annonce, "vendu (non vérifié)", config)
-        return
+            nb_confirmees += 1
+        return (nb_suspectes, nb_confirmees)
 
     max_verifs = cfg_verif.get("max_verifications_par_cycle", 8)
 
@@ -725,6 +814,7 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
             # le vendeur" (voir verifier_statut_annonce) : le libellé reste
             # volontairement neutre plutôt que d'affirmer une vente à tort.
             confirmer_disparition(bd, nom_recherche, annonce, "disparue (vendue probable, ou retirée par le vendeur)", config)
+            nb_confirmees += 1
         elif statut == "active":
             maintenant = datetime.now(timezone.utc).isoformat()
             marquer_verifie_toujours_actif(bd, nom_recherche, annonce["item_id"], maintenant)
@@ -733,6 +823,32 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
                 "(sera re-vérifiée plus tard)."
             )
         # "inconnu" (erreur réseau, etc.) : on ne change rien, nouvelle tentative au prochain cycle
+
+    return (nb_suspectes, nb_confirmees)
+
+
+def vente_rapide(duree, config: dict) -> bool:
+    """Détermine si une disparition confirmée compte comme une "vente rapide"
+    au sens de config.yaml (notifications.seuil_vente_rapide : min_minutes et
+    max_minutes) : une fourchette, pas juste un plafond. En dessous du
+    minimum, c'est le plus souvent le signe d'un faux positif (annonce
+    supprimée puis republiée par exemple) plutôt qu'une vraie vente-éclair ;
+    au-dessus du maximum, ce n'est plus vraiment "rapide". Si la section
+    n'est pas configurée, tout est considéré comme rapide (comportement
+    précédent, notifie toujours)."""
+    cfg = config.get("notifications", {}).get("seuil_vente_rapide")
+    if not cfg:
+        return True
+
+    minutes = duree.total_seconds() / 60
+    minimum = cfg.get("min_minutes")
+    maximum = cfg.get("max_minutes")
+
+    if minimum is not None and minutes < minimum:
+        return False
+    if maximum is not None and minutes > maximum:
+        return False
+    return True
 
 
 def confirmer_disparition(bd: sqlite3.Connection, nom_recherche: str, annonce: dict, raison: str, config: dict) -> None:
@@ -750,8 +866,7 @@ def confirmer_disparition(bd: sqlite3.Connection, nom_recherche: str, annonce: d
 
     afficher_alerte_vente(annonce, duree_str, raison, config)
 
-    seuil = config.get("notifications", {}).get("seuil_vente_rapide_minutes")
-    if seuil is None or (duree.total_seconds() / 60) <= seuil:
+    if vente_rapide(duree, config):
         envoyer_notifications_externes(config, annonce, duree_str, raison)
 
 
@@ -925,11 +1040,12 @@ def attendre(duree_secondes: float, config: dict) -> None:
 # SECTION 11 — UN CYCLE DE SURVEILLANCE
 # ========================================================================
 
-def obtenir_prix_minimum(config: dict) -> int:
+def obtenir_prix_minimum(config: dict) -> int | None:
     """Renvoie le prix minimum fixe à appliquer, défini une fois pour toutes
     dans config.yaml ('prix_minimum'). Le même prix minimum s'applique à
-    toutes les recherches, à chaque cycle."""
-    return config["prix_minimum"]
+    toutes les recherches, à chaque cycle. Renvoie None si non configuré
+    (aucun filtre de prix minimum n'est alors appliqué)."""
+    return config.get("prix_minimum")
 
 
 def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sqlite3.Connection) -> None:
@@ -938,9 +1054,12 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
     page_debut = recherche["page_debut"]
     page_fin = recherche["page_fin"]
 
-    logging.info(f"📄 Recherche « {nom} » — pages {page_debut} à {page_fin} — prix ≥ {prix_min} €")
+    prix_min_str = f"{prix_min} €" if prix_min is not None else "(aucun filtre)"
+    logging.info(f"📄 Recherche « {nom} » — pages {page_debut} à {page_fin} — prix ≥ {prix_min_str}")
 
+    ids_deja_connus = obtenir_tous_les_ids_connus(bd, nom)
     ids_vus_ce_cycle: set[str] = set()
+    nb_nouvelles = 0
     maintenant = datetime.now(timezone.utc).isoformat()
 
     for numero_page in range(page_debut, page_fin + 1):
@@ -971,11 +1090,19 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
 
         for annonce in annonces:
             ids_vus_ce_cycle.add(annonce["id"])
+            if annonce["id"] not in ids_deja_connus:
+                nb_nouvelles += 1
+                ids_deja_connus.add(annonce["id"])  # évite un double comptage si revue plus loin dans ce même cycle
             enregistrer_observation(bd, nom, annonce, maintenant)
 
         pause_aleatoire(1.0, 2.5)  # pause "lecture" avant de passer à la page suivante
 
-    traiter_annonces_disparues(page, nom, ids_vus_ce_cycle, config, bd)
+    nb_suspectes, nb_confirmees = traiter_annonces_disparues(page, nom, ids_vus_ce_cycle, config, bd)
+
+    logging.info(
+        f"   📊 Résumé « {nom} » : {nb_nouvelles} nouvelle(s) annonce(s), "
+        f"{nb_suspectes} suspecte(s), {nb_confirmees} confirmée(s) disparue(s)"
+    )
 
 
 def executer_cycle(config: dict, bd: sqlite3.Connection, chemin_storage_state: str) -> bool:
@@ -1066,7 +1193,8 @@ def main() -> None:
     logging.info("=" * 60)
     logging.info("🚀 Démarrage du moniteur Vinted")
     logging.info(f"   Recherches configurées  : {len(config['recherches'])}")
-    logging.info(f"   Prix minimum (fixe)      : {config['prix_minimum']} €")
+    prix_min_demarrage = config.get("prix_minimum")
+    logging.info(f"   Prix minimum (fixe)      : {prix_min_demarrage} €" if prix_min_demarrage is not None else "   Prix minimum (fixe)      : aucun")
     logging.info(
         f"   Astuce : créez un fichier nommé '{config.get('fichier_pause', 'PAUSE')}' pour "
         "mettre en pause, Ctrl+C pour arrêter proprement."

@@ -14,7 +14,7 @@
 
 
 # --------------------------------------------------------------------------
-# 1) RECHERCHES À SURVEILLER (une ou plusieurs — autant de catégories que vous voulez)
+# 1) RECHERCHES À SURVEILLER (une ou plusieurs — jusqu'à 10 recommandé)
 # --------------------------------------------------------------------------
 # Pour obtenir l'URL d'une recherche/catégorie :
 #   1. Allez sur vinted.fr et configurez la recherche (catégorie, marque,
@@ -26,20 +26,23 @@
 # Champs de chaque recherche :
 #   nom                : un nom court, juste pour vous repérer dans les logs
 #   url                : l'URL de recherche Vinted copiée depuis votre navigateur
-#   page_debut/page_fin: la plage de pages à observer (ex. 9 à 15, comme demandé,
-#                        pour éviter le bruit des toutes nouvelles annonces en page 1)
+#   page_debut/page_fin: la plage de pages à observer. Pour capter les ventes
+#                        très rapides dès la publication de l'annonce,
+#                        utilisez des pages basses (ex. 1 à 2 ou 1 à 3) — une
+#                        annonce vendue avant d'avoir eu le temps de glisser
+#                        plus loin ne serait sinon jamais vue.
 #   inclure_mots_cles  : (optionnel) l'annonce doit contenir au moins un de ces mots
 #   exclure_mots_cles  : (optionnel) l'annonce est ignorée si elle contient un de ces mots
 #
 # Pour ajouter une catégorie de plus : dupliquez un bloc "- nom: ..." entier
-# ci-dessous (même indentation) et changez juste le nom et l'url. Autant de
-# blocs que vous voulez.
+# ci-dessous (même indentation) et changez juste le nom et l'url. Jusqu'à
+# une dizaine de recherches reste raisonnable pour garder des cycles courts.
 #
 recherches:
   - nom: "Vêtements Homme (2050)"
     url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=84&currency=EUR"
     page_debut: 1
-    page_fin: 10
+    page_fin: 2
     inclure_mots_cles: []
     exclure_mots_cles: []
 
@@ -47,23 +50,16 @@ recherches:
   # - nom: "Vêtements Homme (2312)"
   #   url: "https://www.vinted.fr/catalog?catalog[]=2312&price_to=84&currency=EUR"
   #   page_debut: 1
-  #   page_fin: 10
+  #   page_fin: 2
   #   inclure_mots_cles: []
   #   exclure_mots_cles: []
-
-  # - nom: "Sacs à main"
-  #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
-  #   page_debut: 9
-  #   page_fin: 15
-  #   inclure_mots_cles: []
-  #   exclure_mots_cles: ["réplique", "copie", "inspiré de"]
 
   # Dupliquez ce type de bloc autant de fois que nécessaire pour couvrir
   # toutes vos catégories (copiez les lignes, collez, modifiez nom + url) :
   # - nom: "Une autre catégorie"
   #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
-  #   page_debut: 9
-  #   page_fin: 15
+  #   page_debut: 1
+  #   page_fin: 2
   #   inclure_mots_cles: []
   #   exclure_mots_cles: []
 
@@ -73,22 +69,26 @@ recherches:
 #    chaque cycle
 # --------------------------------------------------------------------------
 # - false (par défaut) : TOUTES les recherches ci-dessus sont vérifiées à
-#   CHAQUE cycle. Bien si vous en avez seulement 1 à 3.
+#   CHAQUE cycle, l'une après l'autre, dans le même onglet. Adapté si vous en
+#   avez jusqu'à 2-3.
 # - true : UNE SEULE recherche est vérifiée par cycle, choisie tour à tour
 #   parmi toutes celles listées ci-dessus (ordre mélangé à chaque tour
-#   complet). Recommandé si vous voulez suivre beaucoup de catégories : ça
-#   les couvre toutes au fil du temps sans que chaque cycle devienne trop
-#   long. Revers de la médaille : plus vous avez de catégories, moins
-#   chacune est revérifiée souvent (ex : 10 catégories + cycle ~10 min ≈
-#   chaque catégorie revue environ toutes les 1h40).
+#   complet). Utile si vous en avez beaucoup (proche de 10) : ça les couvre
+#   toutes au fil du temps sans que chaque cycle devienne trop long. Revers
+#   de la médaille : plus vous avez de catégories, moins chacune est
+#   revérifiée souvent.
 rotation: false
 
 
 # --------------------------------------------------------------------------
-# 3) PRIX MINIMUM (fixe, appliqué à toutes les catégories)
+# 3) PRIX MINIMUM (optionnel, fixe, appliqué à toutes les catégories)
 # --------------------------------------------------------------------------
 # Une seule valeur, appliquée telle quelle (price_from) à chaque recherche,
-# à chaque cycle. Modifiez juste ce nombre pour changer le seuil partout.
+# à chaque cycle. Modifiez ce nombre pour changer le seuil partout d'un coup.
+#
+# Pour NE PAS filtrer par prix minimum : laissez la ligne vide comme ceci
+# (ou supprimez complètement la ligne) :
+#     prix_minimum:
 prix_minimum: 80
 
 
@@ -96,11 +96,11 @@ prix_minimum: 80
 # 4) RYTHME DE SURVEILLANCE
 # --------------------------------------------------------------------------
 # Entre deux cycles, le script attend un temps aléatoire tiré entre "min" et
-# "max" (en minutes). Gardez des valeurs raisonnables : plus c'est fréquent,
-# plus l'activité est repérable.
+# "max" (en minutes) — jamais un intervalle pile fixe. Gardez des valeurs
+# raisonnables : plus c'est fréquent, plus l'activité est repérable.
 intervalle_minutes:
-  min: 2
-  max: 4
+  min: 4
+  max: 7
 
 
 # --------------------------------------------------------------------------
@@ -112,10 +112,11 @@ fuseau_horaire: "Europe/Paris"
 
 
 # --------------------------------------------------------------------------
-# 6) PAUSE NOCTURNE
+# 6) PAUSE NOCTURNE (optionnelle)
 # --------------------------------------------------------------------------
 # Aucune activité pendant cette plage horaire (par défaut minuit -> 7h),
 # pour rester discret et ne pas avoir un comportement disponible 24h/24.
+# Mettez "active: false" pour désactiver complètement la pause nocturne.
 pause_nocturne:
   active: true
   heure_debut: 0   # 0 = minuit
@@ -133,13 +134,16 @@ navigateur:
 
 
 # --------------------------------------------------------------------------
-# 8) VÉRIFICATION AVANT DE CONSIDÉRER UNE ANNONCE COMME VENDUE
+# 8) VÉRIFICATION AVANT DE CONSIDÉRER UNE ANNONCE COMME DISPARUE
 # --------------------------------------------------------------------------
 # Quand une annonce suivie n'apparaît plus dans la zone surveillée, cela peut
-# vouloir dire qu'elle a été vendue... ou simplement qu'elle a glissé au-delà
-# de la dernière page surveillée (de nouvelles annonces sont passées devant).
+# vouloir dire qu'elle a disparu... ou simplement qu'elle a glissé au-delà de
+# la dernière page surveillée (de nouvelles annonces sont passées devant).
 # En activant cette vérification, le script visite directement la page de
-# l'annonce pour confirmer avant de l'annoncer comme vendue (recommandé).
+# l'annonce pour confirmer avant de l'annoncer comme disparue (recommandé) —
+# en combinant plusieurs signaux (titre de la page, messages d'erreur
+# visibles, absence de bouton d'achat et de prix affiché) plutôt qu'un seul,
+# pour limiter le risque de fausses alertes.
 verification_avant_disparition:
   active: true
   max_verifications_par_cycle: 10   # limite le nombre de pages-annonces vérifiées par cycle
@@ -171,9 +175,18 @@ notifications:
     active: false
     bot_token: ""        # voir le README pour savoir comment créer un bot Telegram
     chat_id: ""
-  # Notifie seulement si la vente a eu lieu en moins de X minutes après la
-  # première observation. Laissez "null" (vide) pour toujours notifier.
-  seuil_vente_rapide_minutes: 240
+
+  # "Vente rapide" = fourchette de temps entre la première observation et la
+  # disparition confirmée. En dessous du minimum, c'est le plus souvent un
+  # faux positif (annonce supprimée puis republiée par ex.) plutôt qu'une
+  # vraie vente-éclair ; au-dessus du maximum, ce n'est plus vraiment
+  # "rapide". Seules les disparitions DANS cette fourchette déclenchent une
+  # notification Discord/Telegram (le terminal, lui, affiche toujours TOUTES
+  # les disparitions confirmées). Laissez min_minutes/max_minutes vides pour
+  # toujours notifier, quelle que soit la vitesse.
+  seuil_vente_rapide:
+    min_minutes: 2
+    max_minutes: 120
 
 
 # --------------------------------------------------------------------------
