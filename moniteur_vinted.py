@@ -152,6 +152,19 @@ def configurer_logs(config: dict) -> None:
     racine.addHandler(gestionnaire_fichier)
     racine.addHandler(gestionnaire_console)
 
+    # Playwright pilote le navigateur via un pont asyncio interne. Quand on
+    # arrête le script (Ctrl+C) pendant qu'un appel est en cours (ex: lecture
+    # d'une photo d'annonce), il arrive qu'asyncio journalise après coup des
+    # messages internes ("Task was destroyed but it is pending!", "Future
+    # exception was never retrieved") — un nettoyage de tâches devenues
+    # orphelines à cause de l'interruption, pas une erreur de ce script : le
+    # message "Moniteur Vinted arrêté proprement" qui les précède toujours
+    # dans les logs le confirme. Comme le logger "asyncio" est un enfant du
+    # logger racine configuré ci-dessus, ce bruit sans gravité s'affichait
+    # avec le même format que les vraies erreurs de ce script ; on le
+    # supprime spécifiquement, sans toucher au niveau de log général.
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
 
 # ========================================================================
 # SECTION 3 — BASE DE DONNÉES (SQLite : mémoire des annonces déjà vues)
