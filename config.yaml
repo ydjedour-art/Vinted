@@ -38,8 +38,8 @@
 recherches:
   - nom: "Vêtements Homme (2050)"
     url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=200&currency=EUR"
-    page_debut: 4
-    page_fin: 11
+    page_debut: 1
+    page_fin: 3
     inclure_mots_cles: []
     exclure_mots_cles: []
 
@@ -100,8 +100,8 @@ prix_minimum: 80
 # "max" (en minutes). Gardez des valeurs raisonnables : plus c'est fréquent,
 # plus l'activité est repérable.
 intervalle_minutes:
-  min: 8
-  max: 15
+  min: 2
+  max: 4
 
 
 # --------------------------------------------------------------------------
@@ -143,7 +143,7 @@ navigateur:
 # l'annonce pour confirmer avant de l'annoncer comme vendue (recommandé).
 verification_avant_disparition:
   active: true
-  max_verifications_par_cycle: 25   # limite le nombre de pages-annonces vérifiées par cycle
+  max_verifications_par_cycle: 10   # limite le nombre de pages-annonces vérifiées par cycle
   # Augmentez ce nombre si vous suivez beaucoup d'annonces (des centaines/milliers)
   # et que "Disparitions détectées" met trop longtemps à devenir représentatif.
   # Chaque vérification ajoute quelques secondes au cycle (pas d'inquiétude à
