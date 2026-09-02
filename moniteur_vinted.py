@@ -181,6 +181,7 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
             titre TEXT,
             prix REAL,
             url TEXT,
+            image_url TEXT,
             premiere_observation TEXT NOT NULL,
             publiee_le TEXT,
             publication_bornee INTEGER NOT NULL DEFAULT 0,
@@ -202,6 +203,7 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
         "publiee_le TEXT",
         "publication_bornee INTEGER NOT NULL DEFAULT 0",
         "certitude TEXT",
+        "image_url TEXT",
     ):
         try:
             connexion.execute(f"ALTER TABLE annonces ADD COLUMN {definition_colonne}")
@@ -275,15 +277,19 @@ def enregistrer_observation(
     bd.execute(
         """
         INSERT INTO annonces (
-            item_id, recherche, titre, prix, url,
+            item_id, recherche, titre, prix, url, image_url,
             premiere_observation, publiee_le, publication_bornee,
             derniere_observation, statut
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(item_id, recherche) DO UPDATE SET
             derniere_observation = excluded.derniere_observation,
             titre = excluded.titre,
             prix = excluded.prix,
+            -- L'extraction de la photo peut rater ponctuellement (page pas
+            -- entièrement chargée, etc.) : on garde alors la dernière connue
+            -- plutôt que de l'effacer.
+            image_url = COALESCE(excluded.image_url, image_url),
             statut = 'active'
         """,
         (
@@ -292,6 +298,7 @@ def enregistrer_observation(
             annonce["titre"],
             annonce["prix"],
             annonce["url"],
+            annonce.get("image_url"),
             maintenant,
             publiee_le,
             1 if publication_bornee else 0,
@@ -314,7 +321,7 @@ def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> lis
     SQLite."""
     curseur = bd.execute(
         """
-        SELECT item_id, titre, prix, url,
+        SELECT item_id, titre, prix, url, image_url,
                premiere_observation, publiee_le, publication_bornee,
                derniere_verification
         FROM annonces
@@ -836,9 +843,31 @@ def url_absolue(href: str, url_de_base: str) -> str:
 # "Inspecter" sur une annonce, et ajustez au besoin le sélecteur ci-dessous.
 # ========================================================================
 
+def extraire_url_photo(lien) -> str | None:
+    """Essaie de récupérer l'URL de la photo miniature d'une annonce, à partir
+    de l'élément <img> trouvé dans son lien. Reste volontairement tolérant :
+    plusieurs attributs sont essayés (les images sont souvent chargées en
+    différé via 'data-src' plutôt que 'src'), et l'absence de photo n'est
+    jamais une erreur — juste une alerte sans image plus tard."""
+    try:
+        image = lien.locator("img").first
+        for attribut in ("src", "data-src", "srcset"):
+            valeur = image.get_attribute(attribut)
+            if valeur:
+                # srcset peut contenir plusieurs tailles ("url1 1x, url2 2x") :
+                # on garde la première URL.
+                return valeur.split(",")[0].strip().split(" ")[0]
+    except Exception:
+        pass
+    return None
+
+
 def extraire_annonces_de_la_page(page, url_de_base: str) -> list[dict]:
     """Extrait les annonces visibles sur la page de résultats actuellement
-    affichée. Retourne une liste de dictionnaires {id, titre, prix, url}."""
+    affichée. Retourne une liste de dictionnaires {id, titre, prix, url,
+    image_url}. image_url est une estimation "au mieux" (voir
+    extraire_url_photo) : None si elle n'a pas pu être trouvée, ce qui n'empêche
+    jamais de suivre normalement l'annonce."""
     annonces: list[dict] = []
     ids_deja_traites: set[str] = set()
 
@@ -875,6 +904,7 @@ def extraire_annonces_de_la_page(page, url_de_base: str) -> list[dict]:
                     description = ""
 
             titre, prix = analyser_description(description)
+            image_url = extraire_url_photo(lien)
 
             annonces.append(
                 {
@@ -882,6 +912,7 @@ def extraire_annonces_de_la_page(page, url_de_base: str) -> list[dict]:
                     "titre": titre,
                     "prix": prix,
                     "url": url_absolue(href, url_de_base),
+                    "image_url": url_absolue(image_url, url_de_base) if image_url else None,
                 }
             )
         except Exception as erreur:
@@ -1241,16 +1272,28 @@ def envoyer_notifications_externes(config: dict, annonce: dict, duree_str: str, 
 
 
 def envoyer_discord(webhook_url: str, annonce: dict, duree_str: str, raison: str) -> None:
+    """Envoie l'alerte sous forme d'« embed » Discord : titre cliquable (lien
+    direct vers l'annonce), prix et vitesse en champs, et la photo de
+    l'annonce en grand si elle a pu être récupérée au moment où l'annonce a
+    été vue (image_url) — l'annonce n'étant souvent plus disponible au moment
+    de l'alerte, on ne peut pas aller la re-télécharger à cet instant-là."""
     prix_str = f"{annonce['prix']:.2f} €" if annonce.get("prix") is not None else "inconnu"
-    contenu = (
-        f"🔥 **Annonce disparue ({raison})**\n"
-        f"**{annonce['titre']}**\n"
-        f"💶 Prix : {prix_str}\n"
-        f"⏱️ Vitesse estimée : {duree_str}\n"
-        f"🔗 {annonce['url']}"
-    )
+
+    embed = {
+        "title": annonce["titre"] or "Annonce Vinted",
+        "url": annonce["url"],
+        "description": f"🔥 Annonce disparue ({raison})",
+        "color": 0x00C08B,  # vert Vinted
+        "fields": [
+            {"name": "💶 Prix", "value": prix_str, "inline": True},
+            {"name": "⏱️ Vitesse estimée", "value": duree_str, "inline": True},
+        ],
+    }
+    if annonce.get("image_url"):
+        embed["image"] = {"url": annonce["image_url"]}
+
     try:
-        reponse = requests.post(webhook_url, json={"content": contenu}, timeout=10)
+        reponse = requests.post(webhook_url, json={"embeds": [embed]}, timeout=10)
         reponse.raise_for_status()
         logging.info("   ↳ Notification Discord envoyée.")
     except Exception as erreur:

@@ -165,7 +165,9 @@ détaillés section par section — ouvrez-le et lisez-le, il est conçu pour
   l'URL. `active: true` est déjà réglé dans `config.yaml` ; **ne collez
   jamais l'URL dans `webhook_url`** si vous poussez ce dossier sur un dépôt
   Git public (le vôtre l'est) — donnez-la plutôt via la variable
-  d'environnement ci-dessous.
+  d'environnement ci-dessous. Chaque alerte arrive avec le titre (cliquable
+  vers l'annonce), le prix, la vitesse estimée, et la photo de l'annonce
+  quand elle a pu être récupérée.
 - **Telegram** : parlez à [@BotFather](https://t.me/BotFather) (`/newbot`)
   pour un `bot_token`, envoyez un message à votre bot, puis ouvrez
   `https://api.telegram.org/bot<TOKEN>/getUpdates` pour trouver le
