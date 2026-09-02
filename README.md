@@ -167,7 +167,11 @@ détaillés section par section — ouvrez-le et lisez-le, il est conçu pour
   Git public (le vôtre l'est) — donnez-la plutôt via la variable
   d'environnement ci-dessous. Chaque alerte arrive avec le titre (cliquable
   vers l'annonce), le prix, la vitesse estimée, et la photo de l'annonce
-  quand elle a pu être récupérée.
+  quand elle a pu être récupérée. En plus des alertes par annonce, un
+  **rapport de session** part aussi sur Discord à chaque arrêt propre du
+  script (`Ctrl+C`) : annonces actives, disparitions confirmées, vitesse
+  moyenne, détail par catégorie et tendances — un résumé de tout ce qui est
+  en base, pas seulement de cette session.
 - **Telegram** : parlez à [@BotFather](https://t.me/BotFather) (`/newbot`)
   pour un `bot_token`, envoyez un message à votre bot, puis ouvrez
   `https://api.telegram.org/bot<TOKEN>/getUpdates` pour trouver le

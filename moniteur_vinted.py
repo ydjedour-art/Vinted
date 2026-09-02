@@ -56,7 +56,7 @@ import sqlite3
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from zoneinfo import ZoneInfo
@@ -1331,6 +1331,119 @@ def envoyer_telegram(token: str, chat_id: str, annonce: dict, duree_str: str, ra
         logging.warning(f"   ↳ Échec de l'envoi Telegram : {erreur}")
 
 
+# ------------------------------------------------------------------------
+# Rapport de session : résumé envoyé sur Discord quand le script s'arrête
+# (Ctrl+C). Distinct des alertes par annonce : celui-ci récapitule TOUT ce
+# qui est actuellement en base, toutes catégories confondues, pas seulement
+# ce qui s'est passé pendant cette session-ci.
+# ------------------------------------------------------------------------
+
+def generer_rapport_session(bd: sqlite3.Connection, config: dict) -> dict:
+    """Construit le résumé (mêmes données que le tableau de bord : annonces
+    actives, disparitions confirmées, vitesse moyenne, par catégorie, et
+    tendances) pour l'alerte Discord de fin de session."""
+    noms_recherches = [r["nom"] for r in config.get("recherches", [])]
+
+    lignes_categories = []
+    total_actives = 0
+    total_resolues = 0
+    toutes_durees: list[float] = []
+
+    for nom in noms_recherches:
+        n_actives = bd.execute(
+            "SELECT COUNT(*) FROM annonces WHERE recherche = ? AND statut = 'active'", (nom,)
+        ).fetchone()[0]
+
+        curseur = bd.execute(
+            """
+            SELECT premiere_observation, disparition_detectee, publiee_le, publication_bornee
+            FROM annonces WHERE recherche = ? AND statut IN ('vendu', 'indisponible')
+            """,
+            (nom,),
+        )
+        durees_categorie: list[float] = []
+        for premiere, disparition, publiee_le, publication_bornee in curseur.fetchall():
+            if not disparition:
+                continue
+            # Même référence que confirmer_disparition() : la date de
+            # publication bornée par le filigrane si elle existe, sinon la
+            # première observation (moins précis, mais la seule info dispo).
+            reference = publiee_le if (publication_bornee and publiee_le) else premiere
+            try:
+                duree_min = (datetime.fromisoformat(disparition) - datetime.fromisoformat(reference)).total_seconds() / 60
+                durees_categorie.append(duree_min)
+            except (ValueError, TypeError):
+                continue
+
+        vitesse_str = (
+            formater_duree(timedelta(minutes=sum(durees_categorie) / len(durees_categorie)))
+            if durees_categorie else "—"
+        )
+        lignes_categories.append(
+            f"**{nom}** — {n_actives} active(s), {len(durees_categorie)} résolue(s), vitesse moy. {vitesse_str}"
+        )
+        total_actives += n_actives
+        total_resolues += len(durees_categorie)
+        toutes_durees.extend(durees_categorie)
+
+    vitesse_globale_str = (
+        formater_duree(timedelta(minutes=sum(toutes_durees) / len(toutes_durees)))
+        if toutes_durees else "—"
+    )
+
+    tendances = calculer_tendances(bd, recherche=None, limite=8)
+    texte_tendances = (
+        ", ".join(f"{t['mot']} (×{t['lift']:.1f})" for t in tendances)
+        if tendances else "pas encore assez de ventes confirmées"
+    )
+
+    return {
+        "total_actives": total_actives,
+        "total_resolues": total_resolues,
+        "vitesse_globale_str": vitesse_globale_str,
+        "texte_categories": "\n".join(lignes_categories) or "—",
+        "texte_tendances": texte_tendances,
+    }
+
+
+def envoyer_rapport_session_discord(webhook_url: str, rapport: dict, duree_session_str: str) -> None:
+    embed = {
+        "title": "📊 Rapport de session — Moniteur Vinted arrêté",
+        "description": f"Session de {duree_session_str} — arrêt demandé par l'utilisateur (Ctrl+C).",
+        "color": 0x4F46E5,
+        "fields": [
+            {"name": "Annonces actives suivies", "value": str(rapport["total_actives"]), "inline": True},
+            {"name": "Disparitions confirmées (total)", "value": str(rapport["total_resolues"]), "inline": True},
+            {"name": "Vitesse moyenne (toutes catégories)", "value": rapport["vitesse_globale_str"], "inline": True},
+            {"name": "Par catégorie", "value": rapport["texte_categories"][:1024], "inline": False},
+            {"name": "Tendances", "value": rapport["texte_tendances"][:1024], "inline": False},
+        ],
+    }
+    try:
+        reponse = requests.post(webhook_url, json={"embeds": [embed]}, timeout=10)
+        reponse.raise_for_status()
+        logging.info("📊 Rapport de session envoyé sur Discord.")
+    except Exception as erreur:
+        logging.warning(f"Échec de l'envoi du rapport de session sur Discord : {erreur}")
+
+
+def envoyer_rapport_session(config: dict, bd: sqlite3.Connection, duree_session_str: str) -> None:
+    """Envoie le rapport de fin de session sur Discord, si Discord est activé
+    dans config.yaml (même interrupteur que les alertes par annonce — voir
+    envoyer_notifications_externes pour la variable d'environnement)."""
+    cfg_discord = config.get("notifications", {}).get("discord", {}) or {}
+    if not cfg_discord.get("active"):
+        return
+
+    webhook = os.environ.get("VINTED_DISCORD_WEBHOOK", "").strip() or cfg_discord.get("webhook_url", "")
+    if not webhook:
+        logging.warning("Rapport de session : Discord activé mais aucun 'webhook_url' renseigné.")
+        return
+
+    rapport = generer_rapport_session(bd, config)
+    envoyer_rapport_session_discord(webhook, rapport, duree_session_str)
+
+
 # ========================================================================
 # SECTION 10 — PAUSES (manuelle et nocturne)
 # ========================================================================
@@ -1594,6 +1707,8 @@ def analyser_arguments() -> argparse.Namespace:
 
 
 def main() -> None:
+    heure_demarrage = datetime.now(timezone.utc)
+
     arguments = analyser_arguments()
     config = charger_configuration(arguments.config)
     configurer_logs(config)
@@ -1649,6 +1764,14 @@ def main() -> None:
     except KeyboardInterrupt:
         print()
         logging.info("Arrêt demandé par l'utilisateur (Ctrl+C). Fermeture propre en cours...")
+        duree_session_str = formater_duree(datetime.now(timezone.utc) - heure_demarrage)
+        try:
+            envoyer_rapport_session(config, bd, duree_session_str)
+        except Exception as erreur:
+            # Le rapport est une attention en plus, pas une étape critique de
+            # l'arrêt : une erreur ici (réseau coupé, etc.) ne doit jamais
+            # empêcher la fermeture propre de la base et du navigateur.
+            logging.warning(f"Impossible d'envoyer le rapport de session : {erreur}")
     finally:
         bd.close()
         logging.info("✅ Moniteur Vinted arrêté proprement. À bientôt !")

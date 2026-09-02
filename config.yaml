@@ -60,6 +60,27 @@ recherches:
     inclure_mots_cles: []
     exclure_mots_cles: []
 
+  - nom: "Chapeaux et casquettes (86)"
+    url: "https://www.vinted.fr/catalog/86-hats-and-caps?search_id=2685931271"
+    page_debut: 1
+    page_fin: 3
+    inclure_mots_cles: []
+    exclure_mots_cles: []
+
+  - nom: "Catégorie 34"
+    url: "https://www.vinted.fr/catalog?search_id=2685977554&catalog[]=34&order=newest_first&page=1&time=1788363131&size_ids[]=210&size_ids[]=209&size_ids[]=1637&size_ids[]=1639"
+    page_debut: 1
+    page_fin: 3
+    inclure_mots_cles: []
+    exclure_mots_cles: []
+
+  - nom: "Catégorie 10"
+    url: "https://www.vinted.fr/catalog?search_id=2507218957&catalog[]=10&order=newest_first&size_ids[]=4&size_ids[]=5&page=1&time=1788363194"
+    page_debut: 1
+    page_fin: 3
+    inclure_mots_cles: []
+    exclure_mots_cles: []
+
   # Mise de côté (récupérable en décommentant) :
   # - nom: "Vêtements Homme (2312)"
   #   url: "https://www.vinted.fr/catalog?catalog[]=2312&price_to=84&currency=EUR"
