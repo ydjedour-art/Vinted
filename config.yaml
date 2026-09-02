@@ -43,12 +43,13 @@ recherches:
     inclure_mots_cles: []
     exclure_mots_cles: []
 
-  - nom: "Vêtements Homme (2312)"
-    url: "https://www.vinted.fr/catalog?catalog[]=2312&price_to=84&currency=EUR"
-    page_debut: 1
-    page_fin: 10
-    inclure_mots_cles: []
-    exclure_mots_cles: []
+  # Mise de côté (récupérable en décommentant) :
+  # - nom: "Vêtements Homme (2312)"
+  #   url: "https://www.vinted.fr/catalog?catalog[]=2312&price_to=84&currency=EUR"
+  #   page_debut: 1
+  #   page_fin: 10
+  #   inclure_mots_cles: []
+  #   exclure_mots_cles: []
 
   # - nom: "Sacs à main"
   #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
