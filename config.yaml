@@ -36,23 +36,22 @@
 # blocs que vous voulez.
 #
 recherches:
-  - nom: "Catégorie 2050"   # renommez comme vous voulez, ça n'affecte que l'affichage dans les logs
-    url: "https://www.vinted.fr/catalog?catalog[]=2050&currency=EUR"
+  - nom: "Vêtements Homme (2050)"
+    url: "https://www.vinted.fr/catalog?catalog[]=2050&price_to=200&currency=EUR"
     page_debut: 4
     page_fin: 11
     inclure_mots_cles: []
     exclure_mots_cles: []
 
-  - nom: "Vêtements Homme"
-    url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
-    page_debut: 9
-    page_fin: 15
-    inclure_mots_cles: []
-    exclure_mots_cles: []
+  # Mises de côté (une seule recherche active à la fois, comme demandé) —
+  # décommentez pour réactiver, ça ne bloque rien en attendant :
+  # - nom: "Vêtements Homme (2312)"
+  #   url: "https://www.vinted.fr/catalog?catalog[]=2312&currency=EUR"
+  #   page_debut: 9
+  #   page_fin: 15
+  #   inclure_mots_cles: []
+  #   exclure_mots_cles: []
 
-  # Recherche mise de côté (lien pas encore renseigné) — décommentez et
-  # complétez l'url quand vous voulez l'activer, ça ne bloque rien en
-  # attendant :
   # - nom: "Sacs à main"
   #   url: "COLLEZ ICI LE LIEN VINTED DE CETTE CATÉGORIE"
   #   page_debut: 9
@@ -83,7 +82,7 @@ recherches:
 #   long. Revers de la médaille : plus vous avez de catégories, moins
 #   chacune est revérifiée souvent (ex : 10 catégories + cycle ~10 min ≈
 #   chaque catégorie revue environ toutes les 1h40).
-rotation: true
+rotation: false
 
 
 # --------------------------------------------------------------------------
@@ -91,7 +90,7 @@ rotation: true
 # --------------------------------------------------------------------------
 # Une seule valeur, appliquée telle quelle (price_from) à chaque recherche,
 # à chaque cycle. Modifiez juste ce nombre pour changer le seuil partout.
-prix_minimum: 30
+prix_minimum: 80
 
 
 # --------------------------------------------------------------------------
