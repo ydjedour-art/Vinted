@@ -1520,6 +1520,20 @@ def attendre(duree_secondes: float, config: dict) -> None:
         time.sleep(min(30, max(1, fin - time.time())))
 
 
+def calculer_recul_exponentiel(erreurs_consecutives: int, plafond_secondes: int = 3600) -> float:
+    """Durée d'attente (en secondes) après une erreur INATTENDUE pendant un
+    cycle (pas une simple détection de blocage, qui a déjà sa propre pause
+    configurable) : double à chaque erreur consécutive (1 min, 2, 4, 8...),
+    plafonnée à 1h par défaut. Utile en cas de panne durable (réseau coupé,
+    Vinted qui a changé sa page...) : mieux vaut espacer les tentatives que
+    retenter en boucle au rythme normal, qui n'aiderait pas et serait plus
+    facilement repérable. Remise à zéro dès qu'un cycle se termine sans
+    erreur (voir main())."""
+    if erreurs_consecutives <= 0:
+        return 0.0
+    return min(60 * (2 ** (erreurs_consecutives - 1)), plafond_secondes)
+
+
 # ========================================================================
 # SECTION 11 — UN CYCLE DE SURVEILLANCE
 # ========================================================================
@@ -1730,6 +1744,8 @@ def main() -> None:
     )
     logging.info("=" * 60)
 
+    erreurs_consecutives = 0  # remis à zéro dès qu'un cycle se termine sans erreur
+
     try:
         while True:
             if fichier_pause_present(config):
@@ -1741,20 +1757,38 @@ def main() -> None:
                 continue
 
             bloque = False
+            erreur_survenue = False
             try:
                 bloque = executer_cycle(config, bd, chemin_storage_state)
             except Exception as erreur:
                 logging.exception(f"Erreur inattendue pendant le cycle : {erreur}")
+                erreur_survenue = True
 
             if arguments.une_fois:
                 logging.info("Mode --une-fois activé : arrêt après ce cycle.")
                 break
 
-            if bloque:
+            if erreur_survenue:
+                # Recul exponentiel : une erreur isolée retente vite (1 min),
+                # mais des erreurs répétées (panne durable, réseau coupé...)
+                # espacent de plus en plus les tentatives plutôt que de
+                # retenter en boucle au rythme normal, sans effet et plus
+                # facilement repérable. Distinct de la pause "blocage/CAPTCHA"
+                # ci-dessous, qui a sa propre pause déjà configurable.
+                erreurs_consecutives += 1
+                attente_secondes = calculer_recul_exponentiel(erreurs_consecutives)
+                logging.warning(
+                    f"⚠️ {erreurs_consecutives} erreur(s) consécutive(s) — nouvelle tentative dans "
+                    f"{formater_duree(timedelta(seconds=attente_secondes))} (recul progressif)."
+                )
+                attendre(attente_secondes, config)
+            elif bloque:
+                erreurs_consecutives = 0
                 minutes_pause = config.get("pause_si_blocage_minutes", 60)
                 logging.info(f"⏸️ Pause de précaution de {minutes_pause} minutes suite à un blocage détecté.")
                 attendre(minutes_pause * 60, config)
             else:
+                erreurs_consecutives = 0
                 minutes_min = config["intervalle_minutes"]["min"]
                 minutes_max = config["intervalle_minutes"]["max"]
                 attente_secondes = random.uniform(minutes_min * 60, minutes_max * 60)
