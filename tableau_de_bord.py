@@ -121,21 +121,79 @@ MOTS_IGNORES_TENDANCES = {
 }
 
 
-def calculer_tendances(curseur: sqlite3.Cursor, limite: int = 12) -> list[tuple[str, int]]:
-    """Mots les plus fréquents dans les titres des annonces confirmées
-    disparues (vendues probable/indisponibles) — un aperçu très simple des
-    marques/styles qui reviennent souvent, sans liste de marques à tenir à
-    jour à la main."""
-    curseur.execute("SELECT titre FROM annonces WHERE statut IN ('vendu', 'indisponible')")
-    compteur: Counter = Counter()
+def mots_du_titre(titre: str | None) -> set[str]:
+    """Mots retenus pour l'analyse de tendance (en ensemble : un mot répété
+    dans un même titre ne compte que pour une annonce)."""
+    if not titre:
+        return set()
+    return {
+        mot
+        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower())
+        if mot not in MOTS_IGNORES_TENDANCES
+    }
+
+
+def calculer_tendances(curseur: sqlite3.Cursor, limite: int = 12, minimum_ventes: int = 3) -> list[dict]:
+    """Tendances par « lift » : compare la fréquence d'un mot chez les annonces
+    vendues à sa fréquence dans l'ensemble des annonces suivies.
+
+    Un simple comptage des mots des ventes dirait surtout quelles marques sont
+    fréquentes dans la catégorie (si Nike fait 40 % du catalogue, Nike sort en
+    tête même s'il se vend lentement). Le lift répond à la vraie question :
+    "ce mot part-il PLUS VITE que la moyenne ?". Un lift de 2 = deux fois plus
+    présent chez les vendues que dans le catalogue.
+
+    Les lots marqués douteux (rafale de disparitions = probable retrait en
+    masse par un vendeur) sont exclus."""
+    # La colonne 'certitude' n'existe pas dans les bases créées par une version
+    # antérieure du moniteur. Ce tableau de bord étant en lecture seule (il ne
+    # migre jamais la base, c'est le rôle du moniteur), on s'adapte au schéma
+    # trouvé plutôt que de planter.
+    colonnes = {ligne["name"] for ligne in curseur.execute("PRAGMA table_info(annonces)").fetchall()}
+    a_certitude = "certitude" in colonnes
+
+    curseur.execute(
+        "SELECT titre, statut, certitude FROM annonces"
+        if a_certitude
+        else "SELECT titre, statut FROM annonces"
+    )
+
+    compteur_global: Counter = Counter()
+    compteur_ventes: Counter = Counter()
+    total_annonces = 0
+    total_ventes = 0
+
     for ligne in curseur.fetchall():
-        titre = ligne["titre"]
-        if not titre:
+        mots = mots_du_titre(ligne["titre"])
+        if not mots:
             continue
-        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower()):
-            if mot not in MOTS_IGNORES_TENDANCES:
-                compteur[mot] += 1
-    return compteur.most_common(limite)
+
+        total_annonces += 1
+        for mot in mots:
+            compteur_global[mot] += 1
+
+        certitude = (ligne["certitude"] if a_certitude else None) or "confirmee"
+        if ligne["statut"] in ("vendu", "indisponible") and certitude == "confirmee":
+            total_ventes += 1
+            for mot in mots:
+                compteur_ventes[mot] += 1
+
+    if not total_ventes or not total_annonces:
+        return []
+
+    tendances = []
+    for mot, ventes in compteur_ventes.items():
+        if ventes < minimum_ventes:
+            continue
+        part_globale = compteur_global[mot] / total_annonces
+        if not part_globale:
+            continue
+        tendances.append(
+            {"mot": mot, "ventes": ventes, "lift": (ventes / total_ventes) / part_globale}
+        )
+
+    tendances.sort(key=lambda t: t["lift"], reverse=True)
+    return tendances[:limite]
 
 
 def recuperer_donnees(chemin_bd: str) -> dict | None:
@@ -249,8 +307,10 @@ a:hover { text-decoration: underline; }
 .vide { color: var(--texte-att); padding: 2.5rem; text-align: center; background: var(--carte); border-radius: 12px; border: 1px dashed var(--bordure); }
 .titre-annonce { max-width: 320px; }
 .tendances { display: flex; flex-wrap: wrap; gap: .55rem; background: var(--carte); border: 1px solid var(--bordure); border-radius: 12px; padding: 1.1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
-.tendance { display: inline-flex; align-items: baseline; gap: .35rem; background: var(--accent-clair); color: var(--accent); padding: .3rem .7rem; border-radius: 999px; font-size: .85rem; font-weight: 600; }
-.tendance .n { color: var(--texte-att); font-weight: 500; font-size: .75rem; }
+.tendance { display: inline-flex; align-items: baseline; gap: .4rem; background: var(--accent-clair); color: var(--accent); padding: .3rem .75rem; border-radius: 999px; font-size: .85rem; font-weight: 600; }
+.tendance .lift { color: var(--succes); font-weight: 700; font-size: .8rem; }
+.tendance .n { color: var(--texte-att); font-weight: 500; font-size: .72rem; }
+.legende { color: var(--texte-att); font-size: .78rem; margin: -.4rem 0 .7rem; }
 """
 
 
@@ -305,8 +365,10 @@ def generer_page(donnees: dict, fuseau: ZoneInfo, seuil_rapide_max_minutes: floa
         lignes_ventes = '<tr><td colspan="6" style="text-align:center;color:var(--texte-att)">Aucune disparition détectée pour l’instant</td></tr>'
 
     puces_tendances = "".join(
-        f'<span class="tendance">{mot} <span class="n">×{n}</span></span>'
-        for mot, n in donnees["tendances"]
+        f'<span class="tendance">{t["mot"]}'
+        f'<span class="lift">×{t["lift"]:.1f}</span>'
+        f'<span class="n">{t["ventes"]} ventes</span></span>'
+        for t in donnees["tendances"]
     )
     bloc_tendances = (
         f'<div class="tendances">{puces_tendances}</div>'
@@ -341,7 +403,10 @@ def generer_page(donnees: dict, fuseau: ZoneInfo, seuil_rapide_max_minutes: floa
   </section>
 
   <section>
-    <h2>Tendances (mots les plus fréquents parmi les ventes confirmées)</h2>
+    <h2>Tendances</h2>
+    <p class="legende">Mots qui partent plus vite que la moyenne du catalogue.
+    « ×2,0 » = deux fois plus présent chez les annonces vendues que chez
+    l'ensemble des annonces suivies.</p>
     {bloc_tendances}
   </section>
 

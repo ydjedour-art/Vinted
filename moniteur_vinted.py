@@ -182,20 +182,40 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
             prix REAL,
             url TEXT,
             premiere_observation TEXT NOT NULL,
+            publiee_le TEXT,
+            publication_bornee INTEGER NOT NULL DEFAULT 0,
             derniere_observation TEXT NOT NULL,
             statut TEXT NOT NULL DEFAULT 'active',
+            certitude TEXT,
             disparition_detectee TEXT,
             derniere_verification TEXT,
             PRIMARY KEY (item_id, recherche)
         )
         """
     )
-    # Migration en douceur si la base existait déjà (créée par une version
-    # antérieure du script) et n'a pas encore cette colonne.
-    try:
-        connexion.execute("ALTER TABLE annonces ADD COLUMN derniere_verification TEXT")
-    except sqlite3.OperationalError:
-        pass  # la colonne existe déjà (base neuve, ou déjà migrée)
+    # Migrations en douceur : si la base a été créée par une version antérieure
+    # du script, on lui ajoute les colonnes manquantes sans rien perdre de
+    # l'historique déjà accumulé. Une colonne déjà présente lève simplement une
+    # OperationalError qu'on ignore.
+    for definition_colonne in (
+        "derniere_verification TEXT",
+        "publiee_le TEXT",
+        "publication_bornee INTEGER NOT NULL DEFAULT 0",
+        "certitude TEXT",
+    ):
+        try:
+            connexion.execute(f"ALTER TABLE annonces ADD COLUMN {definition_colonne}")
+        except sqlite3.OperationalError:
+            pass  # la colonne existe déjà (base neuve, ou déjà migrée)
+
+    # Index sur les deux chemins d'accès les plus sollicités (la file de
+    # vérification et les comptages par recherche) : sans eux, chaque cycle
+    # relit la table entière, ce qui devient sensible à partir de quelques
+    # milliers d'annonces suivies.
+    connexion.execute("CREATE INDEX IF NOT EXISTS idx_recherche_statut ON annonces (recherche, statut)")
+    connexion.execute(
+        "CREATE INDEX IF NOT EXISTS idx_recherche_verif ON annonces (recherche, derniere_verification)"
+    )
     # Petite table générique "clé -> valeur", utilisée notamment pour retenir
     # où en est le mode rotation (quelles recherches restent à traiter dans
     # le tour en cours), afin que ça survive à un redémarrage du script.
@@ -236,35 +256,67 @@ def obtenir_tous_les_ids_connus(bd: sqlite3.Connection, recherche: str) -> set[s
     return {ligne[0] for ligne in curseur.fetchall()}
 
 
-def enregistrer_observation(bd: sqlite3.Connection, recherche: str, annonce: dict, maintenant: str) -> None:
+def enregistrer_observation(
+    bd: sqlite3.Connection,
+    recherche: str,
+    annonce: dict,
+    maintenant: str,
+    publiee_le: str | None = None,
+    publication_bornee: bool = False,
+) -> None:
     """Ajoute une annonce vue pour la première fois, ou met à jour sa dernière
-    observation si elle était déjà connue (upsert)."""
+    observation si elle était déjà connue (upsert).
+
+    publiee_le / publication_bornee : date de publication déduite du filigrane
+    (voir annonces_publiees_depuis_le_filigrane). Ils ne sont écrits qu'à
+    l'insertion initiale : une fois qu'on a daté une annonce, un passage
+    ultérieur ne doit pas écraser cette information par une valeur moins
+    précise."""
     bd.execute(
         """
-        INSERT INTO annonces (item_id, recherche, titre, prix, url, premiere_observation, derniere_observation, statut)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+        INSERT INTO annonces (
+            item_id, recherche, titre, prix, url,
+            premiere_observation, publiee_le, publication_bornee,
+            derniere_observation, statut
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(item_id, recherche) DO UPDATE SET
             derniere_observation = excluded.derniere_observation,
             titre = excluded.titre,
             prix = excluded.prix,
             statut = 'active'
         """,
-        (annonce["id"], recherche, annonce["titre"], annonce["prix"], annonce["url"], maintenant, maintenant),
+        (
+            annonce["id"],
+            recherche,
+            annonce["titre"],
+            annonce["prix"],
+            annonce["url"],
+            maintenant,
+            publiee_le,
+            1 if publication_bornee else 0,
+            maintenant,
+        ),
     )
     bd.commit()
 
 
 def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> list[dict]:
     """Renvoie toutes les annonces pas encore résolues (statut 'active') pour
-    cette recherche, triées pour prioriser la file de vérification : celles
-    jamais vérifiées directement, puis celles vérifiées il y a le plus
-    longtemps. Ainsi, sur la durée, TOUTE annonce suivie finit par être
-    vérifiée et résolue (vendue/indisponible), même si elle a glissé hors de
-    la zone de pages surveillée depuis longtemps — on ne l'abandonne jamais
-    silencieusement, ce qui fausserait la mesure du temps de vente."""
+    cette recherche. On remonte aussi les colonnes de date nécessaires au
+    calcul de priorité.
+
+    L'ordre définitif de la file de vérification est décidé par
+    prioriser_file_de_verification(). L'ORDER BY conservé ici sert de base
+    stable (jamais vérifiée d'abord, puis la plus anciennement vérifiée) :
+    comme le tri Python est stable, il départage de façon déterministe les
+    annonces de même priorité, au lieu de dépendre de l'ordre interne de
+    SQLite."""
     curseur = bd.execute(
         """
-        SELECT item_id, titre, prix, url, premiere_observation
+        SELECT item_id, titre, prix, url,
+               premiere_observation, publiee_le, publication_bornee,
+               derniere_verification
         FROM annonces
         WHERE recherche = ? AND statut = 'active'
         ORDER BY derniere_verification IS NOT NULL, derniere_verification ASC
@@ -273,6 +325,115 @@ def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> lis
     )
     colonnes = [description[0] for description in curseur.description]
     return [dict(zip(colonnes, ligne)) for ligne in curseur.fetchall()]
+
+
+def age_annonce(annonce: dict, maintenant_dt: datetime) -> float:
+    """Âge de l'annonce en minutes, mesuré depuis sa publication quand celle-ci
+    a pu être bornée par le filigrane, sinon depuis notre première observation
+    (moins précis, mais c'est la meilleure information disponible)."""
+    reference = annonce.get("publiee_le") or annonce["premiere_observation"]
+    try:
+        return (maintenant_dt - datetime.fromisoformat(reference)).total_seconds() / 60
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def prioriser_file_de_verification(annonces: list[dict], config: dict, maintenant_dt: datetime) -> list[dict]:
+    """Trie la file de vérification par UTILITÉ, pas par ancienneté.
+
+    Le budget de vérification par cycle est petit (quelques dizaines de pages
+    au maximum) alors que le nombre d'annonces suivies peut atteindre plusieurs
+    milliers. Le tri « la plus anciennement vérifiée d'abord » traite toutes
+    les annonces à égalité, ce qui gaspille ce budget : une annonce publiée il
+    y a trois jours et toujours en ligne ne produira jamais une « vente
+    rapide », la vérifier n'apprend presque rien sur l'objectif poursuivi.
+
+    On classe donc en trois groupes, du plus utile au moins utile :
+      1. les annonces dont l'âge est DANS la fenêtre de vente rapide — ce sont
+         les seules qui peuvent encore produire le signal recherché ;
+      2. celles qui viennent juste de dépasser la fenêtre (jusqu'à 2x le
+         maximum) — les résoudre ferme proprement leur suivi et alimente les
+         statistiques ;
+      3. tout le reste, du plus ancien au plus récent.
+    À l'intérieur de chaque groupe, les annonces jamais vérifiées passent en
+    premier, puis les moins récemment vérifiées : aucune annonce n'est donc
+    jamais abandonnée, elle est seulement servie plus tard."""
+    seuil = config.get("notifications", {}).get("seuil_vente_rapide") or {}
+    minimum = seuil.get("min_minutes") or 0
+    maximum = seuil.get("max_minutes") or 120
+
+    def cle_de_tri(annonce: dict) -> tuple:
+        age = age_annonce(annonce, maintenant_dt)
+
+        if minimum <= age <= maximum:
+            groupe = 0
+        elif age < minimum:
+            # Trop jeune pour être une vente rapide : on la laisse vivre encore
+            # un peu plutôt que de dépenser une vérification tout de suite.
+            groupe = 2
+        elif age <= maximum * 2:
+            groupe = 1
+        else:
+            groupe = 3
+
+        jamais_verifiee = annonce.get("derniere_verification") is None
+        return (groupe, not jamais_verifiee, annonce.get("derniere_verification") or "")
+
+    return sorted(annonces, key=cle_de_tri)
+
+
+# ------------------------------------------------------------------------
+# Filigrane : dater les publications sans dépendre du HTML de Vinted
+# ------------------------------------------------------------------------
+# Les pages de résultats sont toujours chargées avec order=newest_first, donc
+# la page 1 est le flux des annonces de la plus récente à la plus ancienne.
+# En mémorisant l'identifiant de l'annonce la plus récente vue au cycle
+# précédent (le « filigrane »), toute annonce située AVANT lui dans le flux du
+# cycle suivant a nécessairement été publiée entre les deux passages : sa date
+# de publication est donc bornée à la durée d'un cycle (quelques minutes), au
+# lieu d'être totalement inconnue.
+#
+# L'intérêt est double : c'est bien plus précis que « l'instant où je l'ai
+# remarquée » (une annonce découverte en page 2 peut déjà avoir une heure), et
+# surtout cela ne repose sur AUCUN sélecteur CSS ni aucune supposition sur le
+# HTML de Vinted — seulement sur un ordre de tri que nous imposons nous-mêmes.
+# Si le filigrane est introuvable (trop d'annonces publiées entre deux
+# passages), on ne devine pas : les annonces sont marquées « publication
+# inconnue » et exclues des mesures qui exigent une date fiable.
+# ------------------------------------------------------------------------
+
+def lire_filigrane(bd: sqlite3.Connection, recherche: str) -> tuple[str | None, str | None]:
+    """Renvoie (item_id du filigrane, horodatage de sa pose) pour cette
+    recherche, ou (None, None) si aucun filigrane n'a encore été posé."""
+    valeur = lire_etat(bd, f"filigrane:{recherche}")
+    if not valeur or "|" not in valeur:
+        return (None, None)
+    item_id, horodatage = valeur.split("|", 1)
+    return (item_id or None, horodatage or None)
+
+
+def sauvegarder_filigrane(bd: sqlite3.Connection, recherche: str, item_id: str, horodatage: str) -> None:
+    sauvegarder_etat(bd, f"filigrane:{recherche}", f"{item_id}|{horodatage}")
+
+
+def annonces_publiees_depuis_le_filigrane(
+    annonces_page_1: list[dict], filigrane_id: str | None
+) -> set[str]:
+    """Renvoie les identifiants des annonces publiées depuis le dernier
+    passage, d'après leur position dans le flux trié du plus récent au plus
+    ancien : ce sont celles qui apparaissent AVANT le filigrane.
+
+    Si le filigrane est absent de la page (premier cycle, ou trop de nouvelles
+    annonces depuis le dernier passage pour qu'il soit encore visible), on
+    renvoie un ensemble vide : mieux vaut ne rien dater que dater à tort."""
+    if not filigrane_id:
+        return set()
+
+    identifiants = [annonce["id"] for annonce in annonces_page_1]
+    if filigrane_id not in identifiants:
+        return set()
+
+    return set(identifiants[: identifiants.index(filigrane_id)])
 
 
 # Mots trop courants dans les titres Vinted pour être un signal de tendance
@@ -286,36 +447,129 @@ MOTS_IGNORES_TENDANCES = {
 }
 
 
-def calculer_tendances(bd: sqlite3.Connection, recherche: str | None = None, limite: int = 10) -> list[tuple[str, int]]:
-    """Calcule les mots qui reviennent le plus souvent dans les titres des
-    annonces confirmées disparues (vendues/indisponibles) — une approche très
-    simple de "tendances" (marques, styles, modèles qui partent souvent),
-    sans avoir besoin de connaître à l'avance une liste de marques Vinted.
-    Renvoie une liste de (mot, nombre d'occurrences), du plus fréquent au
-    moins fréquent."""
+def mots_du_titre(titre: str | None) -> set[str]:
+    """Mots retenus pour l'analyse de tendance dans un titre d'annonce.
+    On travaille en ENSEMBLE (pas en liste) : un mot répété deux fois dans le
+    même titre ne doit peser que pour une annonce."""
+    if not titre:
+        return set()
+    return {
+        mot
+        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower())
+        if mot not in MOTS_IGNORES_TENDANCES
+    }
+
+
+def calculer_tendances(
+    bd: sqlite3.Connection,
+    recherche: str | None = None,
+    limite: int = 10,
+    minimum_ventes: int = 3,
+) -> list[dict]:
+    """Calcule les tendances par « lift » plutôt que par simple comptage.
+
+    Le comptage brut des mots des annonces vendues répond en réalité à la
+    question « quelles marques sont fréquentes dans cette catégorie ? », pas
+    « lesquelles partent vite ? ». Si Nike représente 40 % du catalogue, Nike
+    sortira en tête des tendances même si Nike se vend PLUS LENTEMENT que la
+    moyenne : on redécouvre la composition du catalogue, pas une tendance.
+
+    On compare donc, pour chaque mot, sa fréquence chez les annonces vendues
+    à sa fréquence chez TOUTES les annonces suivies :
+
+        lift = (part du mot chez les vendues) / (part du mot chez toutes)
+
+    Un lift de 2 signifie « ce mot apparaît deux fois plus souvent chez les
+    annonces qui partent que dans le catalogue en général » — ça, c'est une
+    vraie tendance. Un lift proche de 1 est du bruit, même pour un mot très
+    fréquent. Les mots vus dans moins de `minimum_ventes` ventes sont écartés
+    (sur 2 ou 3 ventes, un lift élevé n'est que du hasard).
+
+    Seules les disparitions de certitude 'confirmee' sont comptées : les lots
+    douteux (voir marquer_lot_douteux) sont exclus pour ne pas laisser le
+    ménage d'un vendeur polluer les tendances.
+
+    Renvoie une liste de dictionnaires {mot, ventes, lift}, du lift le plus
+    fort au plus faible."""
     if recherche:
-        curseur = bd.execute(
-            "SELECT titre FROM annonces WHERE recherche = ? AND statut IN ('vendu', 'indisponible')",
-            (recherche,),
-        )
+        toutes = bd.execute("SELECT titre, statut, certitude FROM annonces WHERE recherche = ?", (recherche,))
     else:
-        curseur = bd.execute("SELECT titre FROM annonces WHERE statut IN ('vendu', 'indisponible')")
+        toutes = bd.execute("SELECT titre, statut, certitude FROM annonces")
 
-    compteur = Counter()
-    for (titre,) in curseur.fetchall():
-        if not titre:
+    compteur_global: Counter = Counter()
+    compteur_ventes: Counter = Counter()
+    total_annonces = 0
+    total_ventes = 0
+
+    for titre, statut, certitude in toutes.fetchall():
+        mots = mots_du_titre(titre)
+        if not mots:
             continue
-        for mot in re.findall(r"[a-zàâäéèêëïîôöùûüç]{4,}", titre.lower()):
-            if mot not in MOTS_IGNORES_TENDANCES:
-                compteur[mot] += 1
 
-    return compteur.most_common(limite)
+        total_annonces += 1
+        for mot in mots:
+            compteur_global[mot] += 1
+
+        # Une disparition sans certitude renseignée provient d'une version
+        # antérieure du script : on la traite comme confirmée pour ne pas
+        # perdre l'historique déjà accumulé.
+        if statut in ("vendu", "indisponible") and (certitude or "confirmee") == "confirmee":
+            total_ventes += 1
+            for mot in mots:
+                compteur_ventes[mot] += 1
+
+    if not total_ventes or not total_annonces:
+        return []
+
+    tendances = []
+    for mot, ventes in compteur_ventes.items():
+        if ventes < minimum_ventes:
+            continue
+        part_ventes = ventes / total_ventes
+        part_globale = compteur_global[mot] / total_annonces
+        if not part_globale:
+            continue
+        tendances.append({"mot": mot, "ventes": ventes, "lift": part_ventes / part_globale})
+
+    tendances.sort(key=lambda t: t["lift"], reverse=True)
+    return tendances[:limite]
 
 
-def marquer_statut(bd: sqlite3.Connection, recherche: str, item_id: str, statut: str, maintenant: str) -> None:
+def marquer_statut(
+    bd: sqlite3.Connection,
+    recherche: str,
+    item_id: str,
+    statut: str,
+    maintenant: str,
+    certitude: str = "confirmee",
+) -> None:
     bd.execute(
-        "UPDATE annonces SET statut = ?, disparition_detectee = ? WHERE item_id = ? AND recherche = ?",
-        (statut, maintenant, item_id, recherche),
+        """
+        UPDATE annonces SET statut = ?, disparition_detectee = ?, certitude = ?
+        WHERE item_id = ? AND recherche = ?
+        """,
+        (statut, maintenant, certitude, item_id, recherche),
+    )
+    bd.commit()
+
+
+def marquer_lot_douteux(bd: sqlite3.Connection, recherche: str, identifiants: list[str]) -> None:
+    """Dégrade la certitude d'un lot de disparitions détectées dans un même
+    cycle.
+
+    Une disparition confirmée ne prouve pas une vente : elle prouve seulement
+    que l'annonce n'est plus en ligne. Un vendeur qui fait le ménage et retire
+    quarante annonces d'un coup produit exactement la même signature qu'une
+    vague de ventes-éclair — et polluerait durablement les tendances avec ses
+    marques. Une rafale anormale dans un seul cycle est donc marquée
+    'douteuse' : l'information est conservée et reste visible, mais elle est
+    exclue du calcul des tendances."""
+    if not identifiants:
+        return
+    marqueurs = ",".join("?" for _ in identifiants)
+    bd.execute(
+        f"UPDATE annonces SET certitude = 'douteuse' WHERE recherche = ? AND item_id IN ({marqueurs})",
+        (recherche, *identifiants),
     )
     bd.commit()
 
@@ -777,6 +1031,7 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
 
     Renvoie (nombre de "suspectes" ce cycle, nombre confirmées disparues ce
     cycle) pour le résumé affiché dans les logs."""
+    maintenant_dt = datetime.now(timezone.utc)
     suivies = obtenir_annonces_a_surveiller(bd, nom_recherche)
     absentes = [a for a in suivies if a["item_id"] not in ids_vus_ce_cycle]
     nb_suspectes = len(absentes)
@@ -800,12 +1055,17 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
 
     max_verifs = cfg_verif.get("max_verifications_par_cycle", 8)
 
-    # `absentes` est déjà triée par obtenir_annonces_a_surveiller pour
-    # prioriser les annonces jamais vérifiées / vérifiées il y a le plus
-    # longtemps : ainsi, sur la durée, chaque annonce suivie finit par
-    # passer par une vérification directe, même si le nombre d'annonces en
-    # attente dépasse la limite par cycle.
-    for annonce in absentes[:max_verifs]:
+    # La file est triée par utilité (fenêtre de vente rapide d'abord), pas par
+    # ancienneté : avec un budget de quelques vérifications par cycle face à
+    # potentiellement des milliers d'annonces suivies, l'ordre décide de la
+    # productivité réelle du système. Aucune annonce n'est abandonnée pour
+    # autant : celles qui sortent de la fenêtre restent dans la file et
+    # finissent par être servies.
+    file_prioritaire = prioriser_file_de_verification(absentes, config, maintenant_dt)
+
+    confirmees_ce_cycle: list[str] = []
+
+    for annonce in file_prioritaire[:max_verifs]:
         pause_aleatoire(1.0, 2.5)
         statut = verifier_statut_annonce(page, annonce["url"])  # BlocageDetecte remonte naturellement
 
@@ -814,6 +1074,7 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
             # le vendeur" (voir verifier_statut_annonce) : le libellé reste
             # volontairement neutre plutôt que d'affirmer une vente à tort.
             confirmer_disparition(bd, nom_recherche, annonce, "disparue (vendue probable, ou retirée par le vendeur)", config)
+            confirmees_ce_cycle.append(annonce["item_id"])
             nb_confirmees += 1
         elif statut == "active":
             maintenant = datetime.now(timezone.utc).isoformat()
@@ -823,6 +1084,21 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
                 "(sera re-vérifiée plus tard)."
             )
         # "inconnu" (erreur réseau, etc.) : on ne change rien, nouvelle tentative au prochain cycle
+
+    # Garde anti-rafale : au-delà d'une certaine proportion de disparitions
+    # confirmées dans un seul cycle, le motif ressemble davantage à un vendeur
+    # qui retire son stock qu'à une vague de ventes simultanées. On conserve
+    # l'information mais on la marque douteuse pour qu'elle ne fausse pas les
+    # tendances.
+    seuil_rafale = cfg_verif.get("seuil_rafale_douteuse", 0.8)
+    verifiees = min(len(file_prioritaire), max_verifs)
+    if verifiees >= 5 and nb_confirmees >= verifiees * seuil_rafale:
+        logging.warning(
+            f"   ⚠️  {nb_confirmees} disparitions sur {verifiees} vérifications dans le même cycle : "
+            "rafale anormale (retrait en masse par un vendeur ?). Ce lot est marqué douteux et "
+            "exclu du calcul des tendances."
+        )
+        marquer_lot_douteux(bd, nom_recherche, confirmees_ce_cycle)
 
     return (nb_suspectes, nb_confirmees)
 
@@ -853,20 +1129,38 @@ def vente_rapide(duree, config: dict) -> bool:
 
 def confirmer_disparition(bd: sqlite3.Connection, nom_recherche: str, annonce: dict, raison: str, config: dict) -> None:
     """Enregistre la disparition confirmée d'une annonce, affiche une alerte et
-    envoie les notifications externes si configurées."""
+    envoie les notifications externes si configurées.
+
+    La durée est mesurée depuis la publication quand celle-ci a pu être bornée
+    par le filigrane (précision de l'ordre du cycle), sinon depuis notre
+    première observation — auquel cas la durée est une borne SUPÉRIEURE (nous
+    ne savons pas depuis combien de temps l'annonce était déjà en ligne avant
+    qu'on la remarque), ce que l'affichage signale explicitement."""
     maintenant_dt = datetime.now(timezone.utc)
     maintenant = maintenant_dt.isoformat()
 
     statut = "vendu" if raison.startswith("vendu") else "indisponible"
     marquer_statut(bd, nom_recherche, annonce["item_id"], statut, maintenant)
 
-    premiere_dt = datetime.fromisoformat(annonce["premiere_observation"])
-    duree = maintenant_dt - premiere_dt
+    publication_bornee = bool(annonce.get("publication_bornee")) and annonce.get("publiee_le")
+    reference = annonce["publiee_le"] if publication_bornee else annonce["premiere_observation"]
+
+    duree = maintenant_dt - datetime.fromisoformat(reference)
     duree_str = formater_duree(duree)
+    if not publication_bornee:
+        # On ne connaît pas la date de publication : la durée mesurée part de
+        # notre première observation, donc la vraie durée de vie de l'annonce
+        # est forcément plus longue. Le "<" évite de faire passer une
+        # estimation pour une mesure.
+        duree_str = f"< {duree_str}"
 
     afficher_alerte_vente(annonce, duree_str, raison, config)
 
-    if vente_rapide(duree, config):
+    # Seules les annonces dont la publication est datée de façon fiable
+    # peuvent déclencher une alerte "vente rapide" : sans cela, on notifierait
+    # des annonces simplement remarquées tard, ce qui est précisément le biais
+    # que le filigrane sert à corriger.
+    if publication_bornee and vente_rapide(duree, config):
         envoyer_notifications_externes(config, annonce, duree_str, raison)
 
 
@@ -997,6 +1291,24 @@ def attendre_fin_de_pause(config: dict) -> None:
     logging.info("▶️  Reprise de la surveillance (fichier de pause supprimé).")
 
 
+def decalage_nocturne(cfg: dict, jour: str) -> tuple[int, int]:
+    """Décalage aléatoire (en minutes) appliqué aux bornes de la pause
+    nocturne pour un jour donné.
+
+    S'arrêter à 00:00:00 pile et reprendre à 07:00:00 pile chaque jour est en
+    soi une signature : aucun humain n'est aussi ponctuel. On décale donc
+    chaque borne de quelques dizaines de minutes. Le tirage est dérivé de la
+    DATE (et non d'un random appelé à chaque test), pour que les bornes
+    restent stables toute la nuit au lieu de changer à chaque vérification —
+    sinon le script oscillerait entre "c'est la nuit" et "ce n'est plus la
+    nuit" d'un appel à l'autre."""
+    amplitude = cfg.get("flou_minutes", 25)
+    if not amplitude:
+        return (0, 0)
+    tirage = random.Random(f"{jour}:{cfg.get('heure_debut', 0)}:{cfg.get('heure_fin', 7)}")
+    return (tirage.randint(-amplitude, amplitude), tirage.randint(-amplitude, amplitude))
+
+
 def est_periode_nuit(config: dict) -> bool:
     cfg = config.get("pause_nocturne", {})
     if not cfg.get("active", True):
@@ -1005,13 +1317,16 @@ def est_periode_nuit(config: dict) -> bool:
     fuseau = ZoneInfo(config.get("fuseau_horaire", "Europe/Paris"))
     maintenant = datetime.now(fuseau)
 
-    heure_debut = cfg.get("heure_debut", 0)
-    heure_fin = cfg.get("heure_fin", 7)
+    decalage_debut, decalage_fin = decalage_nocturne(cfg, maintenant.strftime("%Y-%m-%d"))
+    # On raisonne en minutes depuis minuit pour pouvoir appliquer le décalage.
+    minute_actuelle = maintenant.hour * 60 + maintenant.minute
+    debut = cfg.get("heure_debut", 0) * 60 + decalage_debut
+    fin = cfg.get("heure_fin", 7) * 60 + decalage_fin
 
-    if heure_debut <= heure_fin:
-        return heure_debut <= maintenant.hour < heure_fin
-    # Cas d'une plage traversant minuit dans l'autre sens (ex: 22h -> 6h)
-    return maintenant.hour >= heure_debut or maintenant.hour < heure_fin
+    if debut <= fin:
+        return debut <= minute_actuelle < fin
+    # Cas d'une plage traversant minuit (ex: 22h -> 6h)
+    return minute_actuelle >= debut or minute_actuelle < fin
 
 
 def attendre_fin_nuit(config: dict) -> None:
@@ -1060,7 +1375,26 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
     ids_deja_connus = obtenir_tous_les_ids_connus(bd, nom)
     ids_vus_ce_cycle: set[str] = set()
     nb_nouvelles = 0
-    maintenant = datetime.now(timezone.utc).isoformat()
+    maintenant_dt = datetime.now(timezone.utc)
+    maintenant = maintenant_dt.isoformat()
+
+    # Filigrane : identifiant de l'annonce la plus récente vue au cycle
+    # précédent, et heure de ce passage. Tout ce qui apparaîtra avant lui dans
+    # le flux trié "plus récent d'abord" a été publié entre les deux passages.
+    filigrane_id, filigrane_horodatage = lire_filigrane(bd, nom)
+    ids_publies_depuis: set[str] = set()
+    nouveau_filigrane: str | None = None
+
+    # Date attribuée aux annonces publiées depuis le dernier passage : le
+    # milieu de l'intervalle [dernier passage, maintenant], ce qui borne
+    # l'erreur à une demi-durée de cycle au lieu de la laisser inconnue.
+    date_publication_estimee = maintenant
+    if filigrane_horodatage:
+        try:
+            precedent_dt = datetime.fromisoformat(filigrane_horodatage)
+            date_publication_estimee = (precedent_dt + (maintenant_dt - precedent_dt) / 2).isoformat()
+        except ValueError:
+            pass
 
     for numero_page in range(page_debut, page_fin + 1):
         url = construire_url_recherche(recherche["url"], prix_min, numero_page)
@@ -1088,19 +1422,43 @@ def traiter_recherche(page, recherche: dict, prix_min: int, config: dict, bd: sq
 
         logging.info(f"   Page {numero_page} : {len(annonces)} annonce(s) retenue(s)")
 
+        # La page la plus haute de la plage porte le flux le plus récent :
+        # c'est elle qui sert à poser le filigrane et à dater les publications.
+        if numero_page == page_debut and annonces:
+            ids_publies_depuis = annonces_publiees_depuis_le_filigrane(annonces, filigrane_id)
+            nouveau_filigrane = annonces[0]["id"]
+            if filigrane_id and not ids_publies_depuis and filigrane_id != nouveau_filigrane:
+                logging.debug(
+                    "   ↳ Filigrane précédent introuvable dans le flux : trop d'annonces publiées "
+                    "depuis le dernier passage pour dater celles-ci de façon fiable."
+                )
+
         for annonce in annonces:
             ids_vus_ce_cycle.add(annonce["id"])
             if annonce["id"] not in ids_deja_connus:
                 nb_nouvelles += 1
                 ids_deja_connus.add(annonce["id"])  # évite un double comptage si revue plus loin dans ce même cycle
-            enregistrer_observation(bd, nom, annonce, maintenant)
+
+            publiee_depuis_dernier_passage = annonce["id"] in ids_publies_depuis
+            enregistrer_observation(
+                bd,
+                nom,
+                annonce,
+                maintenant,
+                publiee_le=date_publication_estimee if publiee_depuis_dernier_passage else None,
+                publication_bornee=publiee_depuis_dernier_passage,
+            )
 
         pause_aleatoire(1.0, 2.5)  # pause "lecture" avant de passer à la page suivante
+
+    if nouveau_filigrane:
+        sauvegarder_filigrane(bd, nom, nouveau_filigrane, maintenant)
 
     nb_suspectes, nb_confirmees = traiter_annonces_disparues(page, nom, ids_vus_ce_cycle, config, bd)
 
     logging.info(
-        f"   📊 Résumé « {nom} » : {nb_nouvelles} nouvelle(s) annonce(s), "
+        f"   📊 Résumé « {nom} » : {nb_nouvelles} nouvelle(s) annonce(s) "
+        f"(dont {len(ids_publies_depuis)} datée(s) précisément), "
         f"{nb_suspectes} suspecte(s), {nb_confirmees} confirmée(s) disparue(s)"
     )
 

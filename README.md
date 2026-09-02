@@ -46,9 +46,25 @@ Si vous n'êtes pas à l'aise avec ces conditions, n'utilisez pas ce script.
 6. Attend un temps aléatoire (4 à 7 minutes par défaut) avant de
    recommencer, sauf la nuit (aucune activité entre minuit et 7h).
 
-⏱️ La « vitesse de vente » est une **estimation** entre votre première
-observation et la disparition confirmée — pas forcément la date de mise en
-ligne réelle de l'annonce.
+### ⏱️ Comment le script date les annonces (et pourquoi c'est important)
+
+Vinted n'indique pas de façon exploitable quand une annonce a été publiée.
+Or « vendue en 12 minutes » n'a de sens que si on sait quand elle est
+apparue. Le script utilise donc un **filigrane** : comme les pages sont
+toujours triées « Plus récent », il retient l'annonce la plus récente vue au
+passage précédent. Toute annonce apparaissant *avant* elle au passage suivant
+a forcément été publiée entre les deux — sa date est donc connue à quelques
+minutes près.
+
+Concrètement, il y a deux qualités de mesure :
+- **Datée précisément** (publication encadrée par deux passages) : la durée
+  affichée est fiable. **Seules ces annonces déclenchent une alerte
+  Discord/Telegram.**
+- **Non datée** (annonce déjà en ligne avant qu'on commence à regarder) : la
+  durée est affichée avec un `<` (ex. `< 40 min`), car l'annonce était
+  peut-être en ligne depuis des heures. Visible dans le terminal, mais jamais
+  notifiée comme « vente rapide » — sinon on confondrait « vendue vite » et
+  « remarquée tard ».
 
 Une annonce n'est **jamais abandonnée en silence** : si elle glisse hors de
 la zone surveillée sans avoir disparu de Vinted, le script continue de la
@@ -138,7 +154,13 @@ détaillés section par section — ouvrez-le et lisez-le, il est conçu pour
 - **Seuil de vente rapide** (`notifications.seuil_vente_rapide`) : la
   fourchette de temps (min/max en minutes) qui déclenche une notification
   Discord/Telegram — le terminal, lui, affiche toujours toutes les
-  disparitions confirmées.
+  disparitions confirmées. Cette fourchette sert aussi à **prioriser les
+  vérifications** : les annonces dont l'âge est dans la fourchette sont
+  vérifiées en premier, puisque ce sont les seules qui peuvent encore
+  produire une vente rapide.
+- **Flou nocturne** (`pause_nocturne.flou_minutes`) : décale aléatoirement
+  les bornes de la pause nocturne de ± ce nombre de minutes, chaque jour.
+  S'arrêter à minuit pile tous les jours est en soi reconnaissable.
 - **Discord** : salon → Intégrations → Webhooks → Nouveau webhook → copiez
   l'URL dans `webhook_url`, mettez `active: true`.
 - **Telegram** : parlez à [@BotFather](https://t.me/BotFather) (`/newbot`)
@@ -186,10 +208,19 @@ surveillance.
 - **Tableau de bord** (`tableau_de_bord.py`) : une page web locale
   (`http://localhost:8080`, rien n'est envoyé sur internet) qui lit
   uniquement cette base — cartes de statistiques, tableau par catégorie,
-  dernières ventes avec badge ⚡ pour les plus rapides, et les tendances
-  (mots/marques qui reviennent le plus dans les ventes confirmées). Se
-  lance à part (`tableau_de_bord.bat` ou `./tableau_de_bord.sh`) et peut
+  dernières ventes avec badge ⚡ pour les plus rapides, et les **tendances**.
+  Se lance à part (`tableau_de_bord.bat` ou `./tableau_de_bord.sh`) et peut
   tourner en même temps que le moniteur, sans jamais rien modifier.
+
+**Lire les tendances** : un mot n'est pas classé sur son nombre d'apparitions
+mais sur son **lift** — sa fréquence chez les annonces vendues divisée par sa
+fréquence dans l'ensemble des annonces suivies. `×3,3` signifie « ce mot est
+3,3 fois plus présent chez les annonces qui partent que dans le catalogue en
+général ». Un simple comptage dirait surtout quelles marques sont *fréquentes*
+(si Nike fait 40 % du catalogue, Nike sort toujours en tête), pas lesquelles
+partent *vite* — un lift inférieur à 1 signale d'ailleurs un article qui se
+vend **plus lentement** que la moyenne. Les mots vus dans moins de 3 ventes
+sont écartés, et les lots suspects (voir ci-dessous) sont exclus.
 
 ---
 
@@ -206,12 +237,18 @@ surveillance.
 
 ## 🔧 Limites connues
 
-- La « vitesse de vente » est une estimation (basée sur votre première
-  observation, pas la date de publication réelle).
-- Le script distingue du mieux qu'il peut une vente d'un simple retrait par
-  le vendeur (plusieurs signaux combinés : titre de page, messages
-  visibles, présence du bouton d'achat), mais ce n'est jamais garanti à
-  100 % — en cas de doute, il préfère ne pas conclure plutôt que se tromper.
+- **Une disparition n'est pas une preuve de vente.** Elle prouve seulement
+  que l'annonce n'est plus en ligne : le vendeur a pu la retirer. Le script
+  combine plusieurs signaux (titre de page, messages visibles, présence du
+  bouton d'achat) et préfère ne pas conclure plutôt que se tromper, mais la
+  distinction n'est jamais garantie à 100 %.
+- **Garde anti-rafale** : si une proportion anormale des vérifications d'un
+  même cycle se solde par une disparition, c'est plus probablement un vendeur
+  qui retire son stock qu'une vague de ventes. Ce lot est marqué « douteux »,
+  reste visible, mais est exclu des tendances pour ne pas les polluer.
+- Les annonces déjà en ligne avant le démarrage du script ne peuvent pas être
+  datées (voir « Comment le script date les annonces ») : elles sont suivies
+  et affichées, mais ne déclenchent pas d'alerte de vente rapide.
 - Si Vinted change son interface et que le script ne trouve plus
   d'annonces (ou se trompe souvent), les fonctions à ajuster sont
   `extraire_annonces_de_la_page` et `verifier_statut_annonce` dans

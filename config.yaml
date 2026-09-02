@@ -121,6 +121,11 @@ pause_nocturne:
   active: true
   heure_debut: 0   # 0 = minuit
   heure_fin: 7     # 7 = 7h du matin
+  # S'arrêter à 00:00:00 pile et reprendre à 07:00:00 pile chaque jour est en
+  # soi un comportement reconnaissable (aucun humain n'est aussi ponctuel).
+  # Les deux bornes sont donc décalées aléatoirement de ± ce nombre de minutes,
+  # avec un tirage différent chaque jour. Mettez 0 pour des horaires stricts.
+  flou_minutes: 25
 
 
 # --------------------------------------------------------------------------
@@ -144,9 +149,20 @@ navigateur:
 # en combinant plusieurs signaux (titre de la page, messages d'erreur
 # visibles, absence de bouton d'achat et de prix affiché) plutôt qu'un seul,
 # pour limiter le risque de fausses alertes.
+#
+# L'ordre de la file de vérification est décidé par utilité : les annonces
+# dont l'âge est dans la fourchette de "vente rapide" (voir section 10) sont
+# vérifiées en priorité, puisque ce sont les seules qui peuvent encore
+# produire le signal recherché. Les autres restent suivies et sont servies
+# plus tard — aucune annonce n'est jamais abandonnée.
 verification_avant_disparition:
   active: true
   max_verifications_par_cycle: 10   # limite le nombre de pages-annonces vérifiées par cycle
+  # Si une proportion anormale des vérifications d'un même cycle se solde par
+  # une disparition (0.8 = 80 %), le motif ressemble plus à un vendeur qui
+  # retire son stock qu'à une vague de ventes : ce lot est alors marqué
+  # "douteux" et exclu du calcul des tendances (il reste visible ailleurs).
+  seuil_rafale_douteuse: 0.8
   # Augmentez ce nombre si vous suivez beaucoup d'annonces (des centaines/milliers)
   # et que "Disparitions détectées" met trop longtemps à devenir représentatif.
   # Chaque vérification ajoute quelques secondes au cycle (pas d'inquiétude à
