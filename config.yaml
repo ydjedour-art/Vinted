@@ -185,8 +185,14 @@ pause_si_blocage_minutes: 60
 # votre téléphone/PC en dehors du terminal.
 notifications:
   discord:
-    active: false
-    webhook_url: ""     # voir le README pour savoir comment créer un webhook Discord
+    active: true
+    # Volontairement laissé vide ICI : ce fichier est publié sur un dépôt
+    # GitHub PUBLIC, et un webhook Discord écrit en clair s'y ferait très
+    # vite récupérer par des robots qui scannent GitHub en continu. Donnez
+    # plutôt la vraie URL via la variable d'environnement
+    # VINTED_DISCORD_WEBHOOK (voir le README) : elle est prioritaire sur
+    # cette ligne et ne quitte jamais votre PC.
+    webhook_url: ""
   telegram:
     active: false
     bot_token: ""        # voir le README pour savoir comment créer un bot Telegram

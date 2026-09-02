@@ -162,15 +162,43 @@ détaillés section par section — ouvrez-le et lisez-le, il est conçu pour
   les bornes de la pause nocturne de ± ce nombre de minutes, chaque jour.
   S'arrêter à minuit pile tous les jours est en soi reconnaissable.
 - **Discord** : salon → Intégrations → Webhooks → Nouveau webhook → copiez
-  l'URL dans `webhook_url`, mettez `active: true`.
+  l'URL. `active: true` est déjà réglé dans `config.yaml` ; **ne collez
+  jamais l'URL dans `webhook_url`** si vous poussez ce dossier sur un dépôt
+  Git public (le vôtre l'est) — donnez-la plutôt via la variable
+  d'environnement ci-dessous.
 - **Telegram** : parlez à [@BotFather](https://t.me/BotFather) (`/newbot`)
   pour un `bot_token`, envoyez un message à votre bot, puis ouvrez
   `https://api.telegram.org/bot<TOKEN>/getUpdates` pour trouver le
-  `chat_id` (nombre après `"chat":{"id":`).
+  `chat_id` (nombre après `"chat":{"id":`). Même remarque : passez-le par
+  variable d'environnement plutôt que par `config.yaml`.
 
-> 💡 Alternative au webhook/token en clair : variables d'environnement
-> `VINTED_DISCORD_WEBHOOK`, `VINTED_TELEGRAM_TOKEN`, `VINTED_TELEGRAM_CHAT_ID`
-> (utilisées en priorité si présentes).
+### 🔑 Variable d'environnement (webhook/token en dehors du fichier)
+
+`config.yaml` peut se retrouver publié (dépôt Git, capture d'écran...). Le
+script lit donc en priorité ces variables d'environnement si elles existent,
+et ne les enregistre jamais dans un fichier :
+`VINTED_DISCORD_WEBHOOK`, `VINTED_TELEGRAM_TOKEN`, `VINTED_TELEGRAM_CHAT_ID`.
+
+**Windows (PowerShell)**, pour que ça survive aux redémarrages :
+
+```powershell
+setx VINTED_DISCORD_WEBHOOK "https://discord.com/api/webhooks/VOTRE-URL"
+```
+
+⚠️ `setx` ne s'applique qu'aux **nouvelles** fenêtres/processus ouverts après
+la commande — fermez complètement PowerShell, puis relancez
+`demarrer.bat` (ne réutilisez pas une fenêtre déjà ouverte).
+
+**macOS/Linux**, à ajouter dans `~/.zshrc` ou `~/.bashrc` puis rouvrir le
+terminal :
+
+```bash
+export VINTED_DISCORD_WEBHOOK="https://discord.com/api/webhooks/VOTRE-URL"
+```
+
+Vérifiez que ça a bien pris avant de lancer le moniteur : `echo
+$env:VINTED_DISCORD_WEBHOOK` (PowerShell) ou `echo $VINTED_DISCORD_WEBHOOK`
+(macOS/Linux) doit afficher votre URL.
 
 ---
 
