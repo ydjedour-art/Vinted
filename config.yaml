@@ -144,7 +144,11 @@ navigateur:
 # l'annonce pour confirmer avant de l'annoncer comme vendue (recommandé).
 verification_avant_disparition:
   active: true
-  max_verifications_par_cycle: 8   # limite le nombre de pages-annonces vérifiées par cycle
+  max_verifications_par_cycle: 25   # limite le nombre de pages-annonces vérifiées par cycle
+  # Augmentez ce nombre si vous suivez beaucoup d'annonces (des centaines/milliers)
+  # et que "Disparitions détectées" met trop longtemps à devenir représentatif.
+  # Chaque vérification ajoute quelques secondes au cycle (pas d'inquiétude à
+  # avoir en dessous d'une cinquantaine).
 
 
 # --------------------------------------------------------------------------
