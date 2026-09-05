@@ -109,6 +109,22 @@ def calculer_duree_minutes(debut_iso: str | None, fin_iso: str | None) -> float 
         return None
 
 
+def duree_et_precision(ligne, disparition_iso: str | None) -> tuple[float | None, bool]:
+    """Durée entre publication et disparition, en préférant — comme
+    moniteur_vinted.py — la date de publication bornée par le filigrane
+    (précise, à quelques minutes près) à la première observation (moins
+    précise : l'annonce a pu être en ligne depuis un moment avant d'être
+    remarquée). Renvoie (durée en minutes, précise ou non).
+
+    `ligne` peut être un sqlite3.Row ou un dict ; .get() fonctionne sur les
+    deux car sqlite3.Row le supporte aussi."""
+    publiee_le = ligne["publiee_le"] if "publiee_le" in ligne.keys() else None
+    bornee = ligne["publication_bornee"] if "publication_bornee" in ligne.keys() else None
+    if bornee and publiee_le:
+        return (calculer_duree_minutes(publiee_le, disparition_iso), True)
+    return (calculer_duree_minutes(ligne["premiere_observation"], disparition_iso), False)
+
+
 # Mots trop courants dans les titres Vinted pour être un signal de tendance
 # utile (état, taille, mots de liaison...). Recopié de moniteur_vinted.py —
 # ce fichier reste volontairement indépendant (aucun import entre les deux)
@@ -206,6 +222,13 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
     connexion.row_factory = sqlite3.Row
     curseur = connexion.cursor()
 
+    # Ce tableau de bord est en lecture seule et ne migre jamais la base
+    # (c'est le rôle du moniteur) : on s'adapte au schéma trouvé plutôt que
+    # de planter sur une base créée par une version antérieure du script.
+    colonnes_table = {ligne["name"] for ligne in curseur.execute("PRAGMA table_info(annonces)").fetchall()}
+    a_filigrane = {"publiee_le", "publication_bornee"} <= colonnes_table
+    champs_duree = ", publiee_le, publication_bornee" if a_filigrane else ""
+
     curseur.execute("SELECT DISTINCT recherche FROM annonces ORDER BY recherche")
     noms_recherches = [ligne["recherche"] for ligne in curseur.fetchall()]
 
@@ -221,8 +244,8 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
         n_actives = curseur.fetchone()["n"]
 
         curseur.execute(
-            """
-            SELECT premiere_observation, disparition_detectee
+            f"""
+            SELECT premiere_observation, disparition_detectee{champs_duree}
             FROM annonces
             WHERE recherche = ? AND statut IN ('vendu', 'indisponible')
             """,
@@ -230,7 +253,7 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
         )
         durees_categorie = [
             d for d in (
-                calculer_duree_minutes(ligne["premiere_observation"], ligne["disparition_detectee"])
+                duree_et_precision(ligne, ligne["disparition_detectee"])[0]
                 for ligne in curseur.fetchall()
             ) if d is not None
         ]
@@ -248,8 +271,8 @@ def recuperer_donnees(chemin_bd: str) -> dict | None:
         toutes_durees.extend(durees_categorie)
 
     curseur.execute(
-        """
-        SELECT titre, prix, url, recherche, premiere_observation, disparition_detectee, statut
+        f"""
+        SELECT titre, prix, url, recherche, premiere_observation, disparition_detectee, statut{champs_duree}
         FROM annonces
         WHERE statut IN ('vendu', 'indisponible')
         ORDER BY disparition_detectee DESC
@@ -347,18 +370,24 @@ def generer_page(donnees: dict, fuseau: ZoneInfo, seuil_rapide_max_minutes: floa
 
     lignes_ventes = ""
     for a in donnees["dernieres_disparitions"]:
-        duree_min = calculer_duree_minutes(a["premiere_observation"], a["disparition_detectee"])
+        duree_min, precise = duree_et_precision(a, a["disparition_detectee"])
         prix = f"{a['prix']:.2f} €" if a.get("prix") is not None else "—"
-        rapide = duree_min is not None and duree_min <= seuil_rapide_max_minutes
+        # Comme pour les notifications Discord (voir moniteur_vinted.py) : le
+        # badge "rapide" n'a de sens que pour une durée datée précisément —
+        # sinon on confondrait "vendue vite" et "remarquée tard".
+        rapide = precise and duree_min is not None and duree_min <= seuil_rapide_max_minutes
         badge = f'<span class="badge">⚡ rapide</span>' if rapide else ""
         titre = (a.get("titre") or "Titre indisponible")
+        duree_str = formater_duree_minutes(duree_min)
+        if duree_min is not None and not precise:
+            duree_str = f"< {duree_str}"  # borne supérieure, pas une mesure exacte
         lignes_ventes += f"""<tr>
             <td class="titre-annonce"><a href="{a['url']}" target="_blank" rel="noopener">{titre}</a> {badge}</td>
             <td>{prix}</td>
             <td>{a['recherche']}</td>
             <td>{formater_date(a['premiere_observation'], fuseau)}</td>
             <td>{formater_date(a['disparition_detectee'], fuseau)}</td>
-            <td>{formater_duree_minutes(duree_min)}</td>
+            <td>{duree_str}</td>
         </tr>"""
 
     if not lignes_ventes:

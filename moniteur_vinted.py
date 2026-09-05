@@ -203,6 +203,7 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
             certitude TEXT,
             disparition_detectee TEXT,
             derniere_verification TEXT,
+            suspicion_depuis TEXT,
             PRIMARY KEY (item_id, recherche)
         )
         """
@@ -217,6 +218,7 @@ def initialiser_base_de_donnees(chemin_fichier: str) -> sqlite3.Connection:
         "publication_bornee INTEGER NOT NULL DEFAULT 0",
         "certitude TEXT",
         "image_url TEXT",
+        "suspicion_depuis TEXT",
     ):
         try:
             connexion.execute(f"ALTER TABLE annonces ADD COLUMN {definition_colonne}")
@@ -336,7 +338,7 @@ def obtenir_annonces_a_surveiller(bd: sqlite3.Connection, recherche: str) -> lis
         """
         SELECT item_id, titre, prix, url, image_url,
                premiere_observation, publiee_le, publication_bornee,
-               derniere_verification
+               derniere_verification, suspicion_depuis
         FROM annonces
         WHERE recherche = ? AND statut = 'active'
         ORDER BY derniere_verification IS NOT NULL, derniere_verification ASC
@@ -600,10 +602,27 @@ def marquer_verifie_toujours_actif(bd: sqlite3.Connection, recherche: str, item_
     nouvelles annonces) : ce n'est PAS une vente. On ne l'abandonne pas pour
     autant — elle reste 'active' et sera re-proposée plus tard dans la file
     de vérification (les moins récemment vérifiées passent en premier), afin
-    de finir par connaître son sort réel."""
+    de finir par connaître son sort réel.
+
+    Efface aussi une éventuelle suspicion précédente (voir
+    marquer_suspicion) : si l'annonce est bien active maintenant, la
+    suspicion d'avant n'était qu'un faux signal passager (page pas encore
+    chargée, etc.), pas un vrai indice à accumuler."""
     bd.execute(
-        "UPDATE annonces SET derniere_verification = ? WHERE item_id = ? AND recherche = ?",
+        "UPDATE annonces SET derniere_verification = ?, suspicion_depuis = NULL WHERE item_id = ? AND recherche = ?",
         (maintenant, item_id, recherche),
+    )
+    bd.commit()
+
+
+def marquer_suspicion(bd: sqlite3.Connection, recherche: str, item_id: str, maintenant: str) -> None:
+    """Enregistre qu'une annonce vient d'être jugée « indisponible_suspect »
+    (signal 3 seul, le plus fragile) sans encore la considérer comme
+    disparue — voir traiter_annonces_disparues pour la logique de seconde
+    vérification."""
+    bd.execute(
+        "UPDATE annonces SET derniere_verification = ?, suspicion_depuis = ? WHERE item_id = ? AND recherche = ?",
+        (maintenant, maintenant, item_id, recherche),
     )
     bd.commit()
 
@@ -982,6 +1001,39 @@ def filtrer_par_mots_cles(annonces: list[dict], recherche: dict) -> list[dict]:
 # SECTION 8 — DÉTECTION DES DISPARITIONS (ventes probables)
 # ========================================================================
 
+def attendre_contenu_annonce(page, delai_max_secondes: float = 8.0) -> str:
+    """Attend que le VRAI contenu d'une page d'annonce (prix, bouton
+    "Acheter") ait eu la chance de s'afficher, en relisant le texte visible à
+    intervalles réguliers plutôt qu'après une seule pause fixe.
+
+    Pourquoi c'est nécessaire : Vinted est une application JavaScript
+    (Next.js). "domcontentloaded" (utilisé pour naviguer) signifie que le
+    HTML de base est chargé, PAS que le contenu réel (prix, bouton) a fini de
+    s'afficher — celui-ci arrive après coup, une fois le JavaScript exécuté.
+    Une pause fixe trop courte peut donc lire la page AVANT que ce contenu
+    n'apparaisse, et conclure à tort qu'une annonce bien réelle et toujours
+    en vente est "indisponible" (absence de prix/bouton alors que la page
+    n'a simplement pas fini de charger) — cause probable de faux positifs
+    groupés observés en pratique sur des annonces pourtant actives.
+
+    Renvoie le texte visible dès qu'un signe de contenu réel (prix ou bouton
+    d'achat) apparaît, ou après le délai maximum si rien n'apparaît."""
+    fin = time.time() + delai_max_secondes
+    texte_visible = ""
+    while True:
+        try:
+            texte_visible = page.inner_text("body").lower()
+        except Exception:
+            return texte_visible
+
+        contenu_present = (
+            re.search(r"\d+[.,]\d{2}\s?€", texte_visible) is not None or "acheter" in texte_visible
+        )
+        if contenu_present or time.time() >= fin:
+            return texte_visible
+        time.sleep(0.5)
+
+
 def verifier_statut_annonce(page, url_annonce: str) -> str:
     """Visite la page d'une annonce précise pour déterminer si elle a
     réellement disparu de Vinted (page supprimée/introuvable) ou si elle est
@@ -1003,7 +1055,13 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
     reste simplement suivie (voir marquer_verifie_toujours_actif) plutôt que
     d'être déclarée vendue à tort.
 
-    Renvoie : "active", "indisponible" ou "inconnu".
+    Renvoie : "active", "indisponible", "indisponible_suspect" ou "inconnu".
+    "indisponible_suspect" : conclu uniquement par le signal 3 (le plus
+    fragile, deviné et non vérifiable sur une vraie page Vinted). Contrairement
+    à "indisponible" (signaux 1/2, fiables), ce verdict n'est PAS traité comme
+    une disparition confirmée dès la première fois — voir
+    traiter_annonces_disparues, qui exige de le revoir une seconde fois avant
+    de conclure, pour ne jamais se fier à ce signal sur une seule visite.
     """
     try:
         page.goto(url_annonce, wait_until="domcontentloaded", timeout=20000)
@@ -1011,14 +1069,13 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
         logging.debug(f"   ↳ Impossible d'ouvrir l'annonce pour vérification : {erreur}")
         return "inconnu"
 
-    pause_aleatoire(0.6, 1.5)
-
     if page_bloquee_ou_captcha(page):
         raise BlocageDetecte()
 
     # --- Signal 1 : le TITRE de l'onglet. Une page supprimée/introuvable a
     # souvent un titre distinctif ("Page introuvable", "404"...), assez fiable
-    # car un titre de page change rarement pour une raison anodine.
+    # car un titre de page change rarement pour une raison anodine, et déjà
+    # disponible dès le chargement du HTML (pas besoin d'attendre le JS).
     try:
         titre_page = (page.title() or "").lower()
     except Exception:
@@ -1034,16 +1091,18 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
     if any(t in titre_page for t in titres_indisponible):
         return "indisponible"
 
+    # Le texte visible, lui, dépend du rendu JavaScript : on lui laisse le
+    # temps d'apparaître avant de juger les signaux 2 et 3 (voir
+    # attendre_contenu_annonce).
+    texte_visible = attendre_contenu_annonce(page)
+    if not texte_visible:
+        return "inconnu"
+
     # --- Signal 2 : phrases explicites dans le texte réellement VISIBLE à
     # l'écran (pas tout le code source, pour limiter le risque de faux
     # positif — voir la mésaventure du mot "vendu" ci-dessus). Ces
     # formulations sont une estimation raisonnable et peuvent nécessiter un
     # ajustement si Vinted change le texte exact de ses messages d'erreur.
-    try:
-        texte_visible = page.inner_text("body").lower()
-    except Exception:
-        return "inconnu"
-
     indicateurs_indisponible = [
         "cet article n'est plus disponible",
         "cette annonce n'existe plus",
@@ -1054,17 +1113,17 @@ def verifier_statut_annonce(page, url_annonce: str) -> str:
     if any(indicateur in texte_visible for indicateur in indicateurs_indisponible):
         return "indisponible"
 
-    # --- Signal 3 (corroborant seulement, jamais utilisé seul) : sur une
-    # annonce active normale, le bouton "Acheter" et un prix affiché sont
-    # quasiment toujours présents dans le texte visible. Leur absence
-    # SIMULTANÉE est un indice supplémentaire, mais un seul signal fragile
-    # (deviné, non vérifié sur une vraie page Vinted) ne suffit jamais à lui
-    # seul à conclure — voir la note plus haut sur le mot "vendu" : mieux
-    # vaut exiger la convergence de plusieurs signaux que se fier à un seul.
+    # --- Signal 3 (le plus fragile — deviné, jamais vérifié sur une vraie
+    # page Vinted) : sur une annonce active normale, le bouton "Acheter" et
+    # un prix affiché sont quasiment toujours présents dans le texte visible.
+    # Leur absence SIMULTANÉE, même après avoir attendu le rendu JS, est un
+    # indice — mais jamais une certitude à lui seul : voir
+    # "indisponible_suspect" plus haut, qui exige une seconde vérification
+    # concordante avant de conclure à une vraie disparition.
     correspondance_prix = re.search(r"\d+[.,]\d{2}\s?€", texte_visible)
     a_bouton_achat = "acheter" in texte_visible
     if not a_bouton_achat and not correspondance_prix:
-        return "indisponible"
+        return "indisponible_suspect"
 
     return "active"
 
@@ -1120,6 +1179,29 @@ def traiter_annonces_disparues(page, nom_recherche: str, ids_vus_ce_cycle: set, 
             confirmer_disparition(bd, nom_recherche, annonce, "disparue (vendue probable, ou retirée par le vendeur)", config)
             confirmees_ce_cycle.append(annonce["item_id"])
             nb_confirmees += 1
+        elif statut == "indisponible_suspect":
+            maintenant = datetime.now(timezone.utc).isoformat()
+            if annonce.get("suspicion_depuis"):
+                # Deuxième constat consécutif du signal le plus fragile (sans
+                # avoir été revue "active" entre-temps) : on considère
+                # maintenant que ce n'est pas un hasard de chargement de page.
+                confirmer_disparition(
+                    bd, nom_recherche, annonce,
+                    "disparue (vendue probable, ou retirée par le vendeur — confirmée après 2 vérifications)",
+                    config,
+                )
+                confirmees_ce_cycle.append(annonce["item_id"])
+                nb_confirmees += 1
+            else:
+                # Première fois seulement : on ne conclut pas encore. Le signal
+                # 3 seul peut être un faux positif passager (page pas encore
+                # chargée au moment de la vérification) — voir
+                # verifier_statut_annonce. Elle reste suivie normalement.
+                marquer_suspicion(bd, nom_recherche, annonce["item_id"], maintenant)
+                logging.debug(
+                    f"   ↳ Annonce {annonce['item_id']} suspecte (signal fragile) — "
+                    "en attente d'une seconde vérification avant de conclure."
+                )
         elif statut == "active":
             maintenant = datetime.now(timezone.utc).isoformat()
             marquer_verifie_toujours_actif(bd, nom_recherche, annonce["item_id"], maintenant)
