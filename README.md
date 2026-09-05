@@ -81,9 +81,10 @@ Vinted/
 ├── config.yaml             # votre configuration — lisez ses commentaires,
 │                            #   chaque option y est expliquée en détail
 ├── requirements.txt        # dépendances Python à installer
-├── demarrer.sh / .bat       # lancement + redémarrage auto si plantage
+├── lancer_tout.sh / .bat    # 🚀 lance TOUT d'un coup (le plus simple)
+├── demarrer.sh / .bat       # lance juste le moniteur + redémarrage auto si plantage
 ├── tableau_de_bord.py       # interface web locale pour consulter les résultats
-├── tableau_de_bord.sh / .bat # lance le tableau de bord
+├── tableau_de_bord.sh / .bat # lance juste le tableau de bord
 ├── README.md                 # ce fichier
 │
 # Créés automatiquement à l'usage :
@@ -209,6 +210,22 @@ $env:VINTED_DISCORD_WEBHOOK` (PowerShell) ou `echo $VINTED_DISCORD_WEBHOOK`
 ---
 
 ## ▶️ Lancer / ⏹️ arrêter
+
+### Le plus simple : tout lancer d'un coup
+
+- **Windows** : double-cliquez sur **`lancer_tout.bat`**. Deux fenêtres
+  s'ouvrent automatiquement (le moniteur, et le tableau de bord dont le
+  navigateur s'ouvre tout seul) — rien d'autre à taper.
+- **macOS/Linux** : `chmod +x lancer_tout.sh` (une fois) puis `./lancer_tout.sh`.
+
+💡 **Astuce Windows** : clic droit sur `lancer_tout.bat` → **Envoyer vers →
+Bureau (créer un raccourci)**. Vous aurez ensuite une icône sur le Bureau à
+double-cliquer, sans jamais rouvrir ce dossier.
+
+Pour tout arrêter : fermez les fenêtres qui se sont ouvertes (moniteur et
+tableau de bord).
+
+### Lancer chaque partie séparément (si vous préférez garder le contrôle)
 
 ```bash
 python moniteur_vinted.py              # tourne en continu
